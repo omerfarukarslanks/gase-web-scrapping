@@ -1,0 +1,72 @@
+import { ExternalLink, Lock, Clock } from 'lucide-react';
+import type { Article } from '../../types/article';
+
+interface Props {
+  article: Article;
+}
+
+function timeAgo(dateStr: string | null): string {
+  if (!dateStr) return '';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 60) return `${minutes}dk`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}sa`;
+  const days = Math.floor(hours / 24);
+  return `${days}g`;
+}
+
+export default function ArticleCard({ article }: Props) {
+  return (
+    <a
+      href={article.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="block bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
+    >
+      <div className="flex gap-4">
+        {article.image_url && (
+          <img
+            src={article.image_url}
+            alt=""
+            className="w-24 h-24 object-cover rounded-lg flex-shrink-0"
+            onError={(e) => (e.currentTarget.style.display = 'none')}
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-semibold text-gray-900 line-clamp-2">{article.title}</h3>
+            <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0 mt-1" />
+          </div>
+
+          {article.summary && (
+            <p className="text-sm text-gray-600 mt-1 line-clamp-2">{article.summary}</p>
+          )}
+
+          <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+            <span className="font-medium text-blue-600">{article.source_name}</span>
+
+            {article.has_paywall && (
+              <span className="flex items-center gap-1 text-amber-600">
+                <Lock className="w-3 h-3" /> Paywall
+              </span>
+            )}
+
+            {article.category && (
+              <span className="bg-gray-100 px-2 py-0.5 rounded">{article.category}</span>
+            )}
+
+            {article.published_at && (
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {timeAgo(article.published_at)}
+              </span>
+            )}
+
+            {article.author && <span>{article.author}</span>}
+          </div>
+        </div>
+      </div>
+    </a>
+  );
+}
