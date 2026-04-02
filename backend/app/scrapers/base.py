@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 
 
 @dataclass
@@ -9,7 +10,7 @@ class ScrapedArticle:
     summary: str | None = None
     content_snippet: str | None = None
     author: str | None = None
-    published_at: str | None = None
+    published_at: datetime | str | None = None
     image_url: str | None = None
     category: str | None = None
     tags: list[str] | None = None

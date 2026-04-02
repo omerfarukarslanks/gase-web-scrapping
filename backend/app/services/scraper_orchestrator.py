@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.scrape_run import ScrapeRun
 from app.models.source import Source
 from app.scrapers.factory import get_scraper
-from app.services.article_service import article_exists, create_article
+from app.services.article_service import create_article, existing_url_hashes, hash_url
 
 logger = logging.getLogger(__name__)
 
 
 async def scrape_source(db: AsyncSession, source: Source) -> ScrapeRun:
     """Scrape a single source and record the run."""
+    logger.info("Scrape started for %s (%s)", source.name, source.slug)
     run = ScrapeRun(
         source_id=source.id,
         status="running",
@@ -27,11 +28,24 @@ async def scrape_source(db: AsyncSession, source: Source) -> ScrapeRun:
         articles = await scraper.fetch_articles()
 
         run.articles_found = len(articles)
+        scraper_stats = getattr(scraper, "last_fetch_stats", None) or {}
+        run.discovery_method_used = scraper_stats.get("discovery_method_used")
+        run.detail_enriched_count = scraper_stats.get("detail_enriched_count", 0)
+        run.metadata_only_count = scraper_stats.get("metadata_only_count", len(articles))
         new_count = 0
         updated_count = 0
+        known_hashes = await existing_url_hashes(
+            db,
+            [article.get("url", "") for article in articles],
+        )
 
         for article_data in articles:
-            if await article_exists(db, article_data["url"]):
+            article_url = article_data.get("url")
+            if not article_url:
+                continue
+
+            article_hash = hash_url(article_url)
+            if article_hash and article_hash in known_hashes:
                 continue
 
             await create_article(
@@ -40,6 +54,7 @@ async def scrape_source(db: AsyncSession, source: Source) -> ScrapeRun:
                 source_category=source.category,
                 **article_data,
             )
+            known_hashes.add(article_hash)
             new_count += 1
 
         run.articles_new = new_count
@@ -57,6 +72,16 @@ async def scrape_source(db: AsyncSession, source: Source) -> ScrapeRun:
     run.duration_seconds = (run.completed_at - run.started_at).total_seconds()
 
     await db.flush()
+    logger.info(
+        "Scrape finished for %s (%s): status=%s found=%s new=%s method=%s duration=%.1fs",
+        source.name,
+        source.slug,
+        run.status,
+        run.articles_found,
+        run.articles_new,
+        run.discovery_method_used or "-",
+        run.duration_seconds or 0.0,
+    )
     return run
 
 

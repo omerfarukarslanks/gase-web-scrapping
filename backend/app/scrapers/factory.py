@@ -1,3 +1,4 @@
+from app.scrapers.configurable_scraper import ConfigurableNewsScraper
 from app.models.source import Source
 from app.scrapers.base import BaseNewsScraper
 from app.scrapers.sources.abcnews import ABCNewsScraper
@@ -31,11 +32,17 @@ SCRAPER_MAP: dict[str, type[BaseNewsScraper]] = {
 }
 
 
-def get_scraper(source: Source) -> BaseNewsScraper:
-    """Get the appropriate scraper for a source."""
+def get_rss_scraper(source: Source) -> BaseNewsScraper:
     scraper_class = SCRAPER_MAP.get(source.slug)
     if not scraper_class:
-        # Fallback to generic RSS scraper
         from app.scrapers.rss_scraper import RSSNewsScraper
         return RSSNewsScraper(source)
     return scraper_class(source)
+
+
+def get_scraper(source: Source):
+    """Get the appropriate scraper for a source."""
+    config = source.config or {}
+    if source.scraper_type != "rss" or config.get("discovery_priority"):
+        return ConfigurableNewsScraper(source, get_rss_scraper)
+    return get_rss_scraper(source)

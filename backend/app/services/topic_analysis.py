@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import logging
 import re
@@ -10,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 import trafilatura
@@ -23,6 +25,7 @@ from app.models.source import Source
 from app.schemas.analysis import (
     AnalysisClusterDebug,
     AnalysisDebug,
+    AnalysisRejectionDebug,
     AnalysisSourceDebug,
     RemotionStat,
     TopicBrief,
@@ -122,6 +125,12 @@ ROLE_PREFIXES = ("coach ", "manager ", "captain ", "sir ", "mr ", "mrs ", "ms ")
 WORD_RE = re.compile(r"[a-z0-9']+")
 SCORE_RE = re.compile(r"\b\d{1,3}\s*-\s*\d{1,3}\b")
 NUMERIC_PHRASE_RE = re.compile(r"\b\d[\w.-]*(?:\s+[A-Za-z][\w'-]*){0,3}\b")
+HTML_ENTITY_RE = re.compile(r"&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]+);")
+TRAILING_CONNECTOR_RE = re.compile(
+    r"(?:\b(?:vs|to|and|or|with|from|after|before|for|on|at|in|by|around|amid|against)\.?|\()\s*$",
+    re.IGNORECASE,
+)
+YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 PROPER_NOUN_RE = re.compile(
     r"\b(?:[A-Z]{2,}|[A-Z][a-z]+)(?:['’]s)?(?:\s+(?:[A-Z]{2,}|[A-Z][a-z]+)(?:['’]s)?){0,3}\b"
 )
@@ -147,6 +156,131 @@ COMPARISON_SIGNAL_RE = re.compile(
     r"\b(vs\.?|versus|head[- ]to[- ]head|compared with|comparison|beat|beats|beating|defeat|defeats|defeated|edge past|outperform|underperform|higher than|lower than)\b",
     re.IGNORECASE,
 )
+NEWSLIKE_URL_RE = re.compile(r"/(?:\d{4}/\d{2}/\d{2}|content/[a-f0-9-]{8,}|articles?/[\w-]{12,}|\d{8}-[\w-]{12,})")
+TITLE_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+){2,}$")
+MARKET_SIGNAL_RE = re.compile(
+    r"\b(stock|stocks|share|shares|bond|bonds|yield|yields|oil|crude|price|prices|markets?|investors?|equities|treasury|tariff|inflation|earnings|forecast|profit|loss|revenue|currency|currencies|fx|dollar|euro)\b",
+    re.IGNORECASE,
+)
+SPORTS_SCHEDULE_SIGNAL_RE = re.compile(
+    r"\b(schedule|fixtures?|dates?|venues?|home-away|calendar|draw|round[- ]robin)\b",
+    re.IGNORECASE,
+)
+SPORTS_ODDS_SIGNAL_RE = re.compile(
+    r"\b(odds|prediction|predictions|spread|line|betting|favorite|favourite|picks|model)\b",
+    re.IGNORECASE,
+)
+SPORTS_ADMIN_SIGNAL_RE = re.compile(
+    r"\b(president|commissioner|director|athletic director|ad\b|resigns?|rule|policy|conference championship|federation)\b",
+    re.IGNORECASE,
+)
+NON_NEWS_URL_SEGMENTS = {
+    "subscription",
+    "subscriptions",
+    "account",
+    "accounts",
+    "settings",
+    "newsletter",
+    "newsletters",
+    "gift-guide",
+    "gift-guides",
+    "guide",
+    "guides",
+    "calculator",
+    "calculators",
+    "workwise",
+    "sponsored",
+    "sponsored-contents",
+    "replay",
+    "video",
+    "videos",
+    "watch",
+    "liveblog",
+    "live-blog",
+    "topic",
+    "topics",
+    "tag",
+    "tags",
+    "author",
+    "authors",
+    "search",
+    "news-alerts-settings",
+}
+NON_NEWS_URL_HINTS = {
+    "subscription",
+    "calculator",
+    "gift-guide",
+    "gift-guides",
+    "newsletter",
+    "settings",
+    "sponsored",
+    "replay",
+    "video",
+    "videos",
+    "workwise",
+    "topic",
+    "topics",
+    "tag",
+    "tags",
+    "author",
+    "authors",
+}
+UTILITY_TITLE_TERMS = {
+    "subscriptions",
+    "subscription",
+    "workwise",
+    "gift guide",
+    "gift guides",
+    "calculator",
+    "calculators",
+    "latest newscast",
+    "closed-captioned newscast",
+    "sponsored contents",
+    "news alerts settings",
+}
+SINGLE_WORD_SECTION_TERMS = {
+    "subscriptions",
+    "workwise",
+    "lifestyle",
+    "opinion",
+    "videos",
+    "video",
+    "podcasts",
+}
+GENERIC_ENTITY_TOKENS = {
+    "check",
+    "latest",
+    "jet",
+    "news",
+    "world",
+    "general",
+    "duration",
+    "home",
+    "guide",
+    "president",
+}
+VALID_REJECTION_REASONS = {
+    "non_news_url",
+    "utility_or_hub_page",
+    "stale_or_evergreen",
+    "broken_title",
+    "html_artifact",
+    "low_signal_unique",
+    "template_mismatch",
+}
+TEXT_NORMALIZATION_TRANSLATION = str.maketrans(
+    {
+        "\xa0": " ",
+        "\u200b": " ",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2026": "...",
+    }
+)
 
 
 class OllamaAnalysisError(RuntimeError):
@@ -166,12 +300,32 @@ class PreparedArticle:
     text_tokens: set[str] = field(default_factory=set)
 
 
+@dataclass(slots=True)
+class AnalysisRejection:
+    reason: str
+    stage: str
+    title: str
+    url: str
+
+
+@dataclass(slots=True)
+class PreparedArticlesResult:
+    prepared_articles: list[PreparedArticle]
+    rejections: list[AnalysisRejection] = field(default_factory=list)
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
 def compact_text(value: str | None) -> str:
-    return re.sub(r"\s+", " ", value or "").strip()
+    if value is None:
+        return ""
+    normalized = html.unescape(str(value)).translate(TEXT_NORMALIZATION_TRANSLATION)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = re.sub(r"\s+([,.;:!?])", r"\1", normalized)
+    normalized = re.sub(r"\.{4,}", "...", normalized)
+    return normalized
 
 
 def trim_words(value: str, max_words: int) -> str:
@@ -240,6 +394,233 @@ def clean_viewer_points(
         if normalized:
             cleaned.append(normalized)
     return dedupe_preserve_order(cleaned)[:max_items]
+
+
+def make_rejection(reason: str, *, stage: str, title: str, url: str) -> AnalysisRejection:
+    normalized_reason = reason if reason in VALID_REJECTION_REASONS else "low_signal_unique"
+    return AnalysisRejection(
+        reason=normalized_reason,
+        stage=stage,
+        title=compact_text(title),
+        url=compact_text(url),
+    )
+
+
+def has_html_artifact(value: str | None) -> bool:
+    compacted = compact_text(value)
+    return bool(HTML_ENTITY_RE.search(value or "") or re.search(r"\b(?:nbsp|quot|amp|8217|8220|8221)\b", compacted))
+
+
+def looks_like_slug_title(value: str) -> bool:
+    compacted = compact_text(value)
+    return bool(compacted and TITLE_SLUG_RE.fullmatch(compacted.lower()))
+
+
+def has_unbalanced_punctuation(value: str) -> bool:
+    compacted = compact_text(value)
+    if not compacted:
+        return False
+    single_quotes = compacted.count("'")
+    return (
+        compacted.count("(") != compacted.count(")")
+        or compacted.count('"') % 2 == 1
+        or (compacted.endswith("'") and single_quotes == 1)
+    )
+
+
+def looks_broken_title(value: str) -> bool:
+    compacted = compact_text(value)
+    lowered = compacted.lower()
+    if not compacted:
+        return True
+    if len(compacted) < 8 or looks_like_slug_title(compacted):
+        return True
+    if compacted.endswith("..."):
+        truncated_root = compacted[:-3].strip()
+        if len(compacted.split()) <= 4 or TRAILING_CONNECTOR_RE.search(truncated_root):
+            return True
+    if TRAILING_CONNECTOR_RE.search(compacted):
+        return True
+    if re.search(r"['\"][A-Z]\.?$", compacted):
+        return True
+    if has_unbalanced_punctuation(compacted):
+        return True
+    if len(compacted.split()) == 1 and lowered in SINGLE_WORD_SECTION_TERMS:
+        return True
+    return False
+
+
+def is_utility_title(value: str) -> bool:
+    lowered = compact_text(value).lower()
+    return any(term == lowered or term in lowered for term in UTILITY_TITLE_TERMS)
+
+
+def extract_title_years(value: str) -> list[int]:
+    return [int(match.group(0)) for match in YEAR_RE.finditer(compact_text(value))]
+
+
+def has_stale_year_signal(title: str, timestamp: datetime) -> bool:
+    years = extract_title_years(title)
+    if not years:
+        return False
+    return any(year <= timestamp.year - 2 for year in years)
+
+
+def path_segments(url: str) -> list[str]:
+    path = urlparse(url).path.strip("/").lower()
+    if not path:
+        return []
+    return [segment for segment in path.split("/") if segment]
+
+
+def last_path_segment(url: str) -> str:
+    segments = path_segments(url)
+    return segments[-1] if segments else ""
+
+
+def url_has_non_news_segment(url: str) -> bool:
+    segments = path_segments(url)
+    return any(
+        segment in NON_NEWS_URL_SEGMENTS
+        or any(re.search(rf"(?:^|[-_]){re.escape(hint)}(?:$|[-_])", segment) for hint in NON_NEWS_URL_HINTS)
+        for segment in segments
+    )
+
+
+def looks_news_like_url(url: str) -> bool:
+    compacted = compact_text(url)
+    if not compacted or url_has_non_news_segment(compacted):
+        return False
+    if NEWSLIKE_URL_RE.search(compacted):
+        return True
+    last_segment = last_path_segment(compacted)
+    if not last_segment:
+        return False
+    if "." in last_segment:
+        last_segment = last_segment.rsplit(".", 1)[0]
+    if len(last_segment) >= 8 and "-" in last_segment:
+        return True
+    return bool(re.search(r"[a-z]{4,}[-_][a-z0-9-]{4,}", last_segment))
+
+
+def has_minimum_story_signal(title: str, summary: str) -> bool:
+    clean_title = compact_text(title)
+    clean_summary = compact_text(summary)
+    combined_tokens = tokenize(f"{clean_title} {clean_summary}", max_tokens=80)
+    return len(clean_title.split()) >= 3 and len(combined_tokens) >= 5 and len(clean_summary.split()) >= 6
+
+
+def infer_story_subtype(
+    *,
+    category: str,
+    headline: str,
+    summary: str,
+    key_points: list[str],
+    comparison_story: bool,
+) -> str:
+    combined = compact_text(" ".join([headline, summary, *key_points]))
+    if category == "sports":
+        if SPORTS_ODDS_SIGNAL_RE.search(combined):
+            return "odds"
+        if SPORTS_SCHEDULE_SIGNAL_RE.search(combined):
+            return "schedule"
+        if SPORTS_ADMIN_SIGNAL_RE.search(combined):
+            return "admin"
+        if comparison_story:
+            return "matchup"
+        return "update"
+    if category == "business":
+        if MARKET_SIGNAL_RE.search(combined):
+            return "market"
+        return "general"
+    return "general"
+
+
+def article_eligibility_reason(article: Article, *, timestamp: datetime) -> str | None:
+    raw_title = article.title or ""
+    raw_summary = article.summary or article.content_snippet or ""
+    clean_title = compact_text(raw_title)
+    clean_summary = compact_text(raw_summary)
+
+    if url_has_non_news_segment(article.url):
+        last_segment = last_path_segment(article.url)
+        if last_segment in {"video", "videos", "watch"}:
+            return "non_news_url"
+        return "utility_or_hub_page"
+    if is_utility_title(clean_title):
+        return "utility_or_hub_page"
+    if looks_broken_title(clean_title):
+        return "broken_title"
+    if has_stale_year_signal(clean_title, timestamp):
+        return "stale_or_evergreen"
+    if has_html_artifact(raw_title) and looks_broken_title(clean_title):
+        return "html_artifact"
+    if not article.published_at and (not looks_news_like_url(article.url) or not has_minimum_story_signal(clean_title, clean_summary or clean_title)):
+        return "stale_or_evergreen"
+    return None
+
+
+def unique_candidate_rejection_reason(cluster: list[PreparedArticle]) -> str | None:
+    if not cluster:
+        return "low_signal_unique"
+
+    representative = cluster[0].article
+    titles = [compact_text(item.article.title) for item in cluster if compact_text(item.article.title)]
+    summaries = [
+        compact_text(item.article.summary) or compact_text(item.article.content_snippet)
+        for item in cluster
+    ]
+    headline = min(titles, key=len) if titles else compact_text(representative.title)
+    summary = " ".join([value for value in summaries if value][:2]) or headline
+    category = cluster[0].normalized_category
+
+    if not looks_news_like_url(representative.url):
+        return "non_news_url"
+    if is_utility_title(headline):
+        return "utility_or_hub_page"
+    if looks_broken_title(headline):
+        return "broken_title"
+    if has_stale_year_signal(headline, cluster[0].timestamp):
+        return "stale_or_evergreen"
+    if any(has_html_artifact(item.article.title) or has_html_artifact(item.article.summary) for item in cluster) and not has_minimum_story_signal(headline, summary):
+        return "html_artifact"
+    if not has_minimum_story_signal(headline, summary):
+        return "low_signal_unique"
+
+    subtype = infer_story_subtype(
+        category=category,
+        headline=headline,
+        summary=summary,
+        key_points=titles[:2],
+        comparison_story=is_comparison_story(
+            category=category,
+            headline=headline,
+            summary=summary,
+            key_points=titles[:2],
+            score=extract_score([headline, summary, *titles[:2]]),
+        ),
+    )
+    if category == "sports" and subtype == "matchup" and not extract_score([headline, summary, *titles[:2]]) and not COMPARISON_SIGNAL_RE.search(summary):
+        return "template_mismatch"
+    return None
+
+
+def topic_render_rejection_reason(
+    *,
+    aggregation_type: str,
+    headline: str,
+    summary: str,
+    key_points: list[str],
+) -> str | None:
+    clean_headline = compact_text(headline)
+    clean_summary = compact_text(summary)
+    if looks_broken_title(clean_headline):
+        return "broken_title"
+    if has_html_artifact(headline) or has_html_artifact(summary):
+        return "html_artifact"
+    if aggregation_type == "unique" and not has_minimum_story_signal(clean_headline, clean_summary or " ".join(key_points)):
+        return "low_signal_unique"
+    return None
 
 
 def build_why_it_matters_line(category: str) -> str:
@@ -348,6 +729,8 @@ def extract_numeric_phrase(values: list[str], *, exclude: set[str] | None = None
             candidate = compact_text(match.group(0))
             if not candidate or candidate.lower() in excluded:
                 continue
+            if re.fullmatch(r"\d{3,5}", candidate):
+                continue
             return candidate
     return ""
 
@@ -372,6 +755,7 @@ def extract_named_phrases(values: list[str], *, ignore: set[str] | None = None, 
     phrases: list[str] = []
     seen: set[str] = set()
     for value in values:
+        compacted_value = compact_text(value)
         for match in PROPER_NOUN_RE.finditer(value):
             candidate = compact_text(match.group(0))
             if not candidate:
@@ -381,6 +765,13 @@ def extract_named_phrases(values: list[str], *, ignore: set[str] | None = None, 
                 continue
             if len(candidate) < 3:
                 continue
+            if " " not in candidate and not candidate.isupper():
+                if lowered in GENERIC_ENTITY_TOKENS:
+                    continue
+                if compacted_value.startswith(f"{candidate} ") and sum(
+                    1 for text in values if re.search(rf"\b{re.escape(candidate)}\b", compact_text(text))
+                ) < 2:
+                    continue
             seen.add(lowered)
             phrases.append(candidate)
             if len(phrases) >= max_items:
@@ -633,7 +1024,7 @@ async def build_prepared_articles(
     articles: list[Article],
     *,
     category_filter: str | None = None,
-) -> list[PreparedArticle]:
+) -> PreparedArticlesResult:
     text_cache: dict[str, str] = {}
 
     async with httpx.AsyncClient(
@@ -653,7 +1044,18 @@ async def build_prepared_articles(
             ]
         )
 
-    return [item for item in prepared if item is not None]
+    prepared_articles: list[PreparedArticle] = []
+    rejections: list[AnalysisRejection] = []
+    for item in prepared:
+        if isinstance(item, PreparedArticle):
+            prepared_articles.append(item)
+        elif isinstance(item, AnalysisRejection):
+            rejections.append(item)
+
+    return PreparedArticlesResult(
+        prepared_articles=prepared_articles,
+        rejections=rejections,
+    )
 
 
 async def _build_prepared_article(
@@ -662,10 +1064,20 @@ async def _build_prepared_article(
     client: httpx.AsyncClient,
     cache: dict[str, str],
     category_filter: str | None,
-) -> PreparedArticle | None:
+) -> PreparedArticle | AnalysisRejection | None:
     normalized_category = normalize_analysis_category(article.category, article.source_category)
     if category_filter and normalized_category != category_filter:
         return None
+
+    timestamp = get_article_timestamp(article)
+    rejection_reason = article_eligibility_reason(article, timestamp=timestamp)
+    if rejection_reason:
+        return make_rejection(
+            rejection_reason,
+            stage="article",
+            title=article.title,
+            url=article.url,
+        )
 
     base_text = compact_text(article.summary) or compact_text(article.content_snippet)
     if not base_text:
@@ -679,7 +1091,7 @@ async def _build_prepared_article(
         article=article,
         normalized_category=normalized_category,
         analysis_text=analysis_text,
-        timestamp=get_article_timestamp(article),
+        timestamp=timestamp,
         source_name=source_name,
         source_slug=source_slug,
         tag_tokens={compact_text(str(tag)).lower() for tag in (article.tags or []) if compact_text(str(tag))},
@@ -985,11 +1397,18 @@ def build_contextual_prompt_parts(
         key_points=key_points,
         score=score,
     )
+    story_subtype = infer_story_subtype(
+        category=category,
+        headline=headline,
+        summary=summary,
+        key_points=key_points,
+        comparison_story=comparison_story,
+    )
     duration_seconds = suggest_duration_seconds(category, key_points, summary)
     if category == "sports":
         sports_matchup, sports_focus = select_sports_matchup_and_focus(
             focus_names,
-            allow_matchup=comparison_story,
+            allow_matchup=story_subtype == "matchup",
         )
         matchup = sports_matchup or matchup
         focus_entity = sports_focus or focus_entity
@@ -1005,7 +1424,7 @@ def build_contextual_prompt_parts(
     must_include: list[str]
 
     if category == "sports":
-        if comparison_story:
+        if story_subtype == "matchup":
             format_hint = "Premium broadcast-meets-kinetic-typography sports short"
             story_angle = (
                 f"Turn {matchup or truncate_for_prompt(headline, 72)} into a sharp, emotionally readable sports moment"
@@ -1030,9 +1449,29 @@ def build_contextual_prompt_parts(
             design_keywords = ["broadcast polish", "kinetic typography", "score bug", "stadium glow", "snap zooms"]
         else:
             format_hint = "Premium social-first sports update"
+            focal_phrase = focus_entity or truncate_for_prompt(headline, 48)
+            if story_subtype == "schedule":
+                story_angle = (
+                    f"Turn {truncate_for_prompt(headline, 76)} into a clear schedule-driven sports update centered on {focal_phrase}, "
+                    "using date and venue information without forcing a matchup recap."
+                )
+            elif story_subtype == "odds":
+                story_angle = (
+                    f"Explain {truncate_for_prompt(headline, 76)} as a betting-and-expectations sports update centered on {focal_phrase}, "
+                    "without pretending a game result already happened."
+                )
+            elif story_subtype == "admin":
+                story_angle = (
+                    f"Tell {truncate_for_prompt(headline, 76)} as an off-field sports development centered on {focal_phrase}, "
+                    "with editorial clarity instead of scoreboard energy."
+                )
+            else:
+                story_angle = (
+                    f"Tell {truncate_for_prompt(headline, 76)} as a short, human sports update"
+                    f"{f' centered on {focus_entity}' if focus_entity else ''}, without forcing a matchup or scoreboard framing."
+                )
             story_angle = (
-                f"Tell {truncate_for_prompt(headline, 76)} as a short, human sports update"
-                f"{f' centered on {focus_entity}' if focus_entity else ''}, without forcing a matchup or scoreboard framing."
+                story_angle
             )
             visual_brief = (
                 "Use a strong athlete or coach portrait, editorial sports typography, subtle stadium texture, and one clean hero-image-led composition. "
@@ -1056,27 +1495,47 @@ def build_contextual_prompt_parts(
         )
         tone = "High-energy, premium, and emotionally clear"
     elif category == "business":
-        format_hint = "Editorial financial explainer with premium motion graphics"
-        story_angle = (
-            f"Frame {truncate_for_prompt(headline, 78)} as a crisp market narrative with one clear trigger and one clear consequence"
-            f"{f', centering {numeric_phrase} as the most visible data point' if numeric_phrase else ''}."
-        )
-        visual_brief = (
-            "Use elegant dark-finance UI panels, glowing charts, restrained glass surfaces, and clean directional arrows. "
-            "It should feel closer to a premium Bloomberg-style promo than a static market card."
-        )
-        motion_treatment = "Smooth value-counting, layered chart parallax, sliding data panes, and restrained camera drift."
-        transition_style = "Glass panel wipes, soft chart morphs, ticker pulls, and clean numeric snap-ins."
-        scene_sequence = [
-            "Open with a single commanding market card that states the move and the tension immediately.",
-            f"Show the trigger and the reaction as a clear visual chain, led by: {top_key_point}.",
-            f"Close on a poised outlook board hinting at what traders or observers watch next: {truncate_for_prompt(why_it_matters, 96)}.",
-        ]
-        design_keywords = ["glassmorphism", "market UI", "chart glow", "directional arrows", "editorial finance"]
+        if story_subtype == "market":
+            format_hint = "Editorial financial explainer with premium motion graphics"
+            story_angle = (
+                f"Frame {truncate_for_prompt(headline, 78)} as a crisp market narrative with one clear trigger and one clear consequence"
+                f"{f', centering {numeric_phrase} as the most visible data point' if numeric_phrase else ''}."
+            )
+            visual_brief = (
+                "Use elegant dark-finance UI panels, glowing charts, restrained glass surfaces, and clean directional arrows. "
+                "It should feel closer to a premium Bloomberg-style promo than a static market card."
+            )
+            motion_treatment = "Smooth value-counting, layered chart parallax, sliding data panes, and restrained camera drift."
+            transition_style = "Glass panel wipes, soft chart morphs, ticker pulls, and clean numeric snap-ins."
+            scene_sequence = [
+                "Open with a single commanding market card that states the move and the tension immediately.",
+                f"Show the trigger and the reaction as a clear visual chain, led by: {top_key_point}.",
+                f"Close on a poised outlook board hinting at what traders or observers watch next: {truncate_for_prompt(why_it_matters, 96)}.",
+            ]
+            design_keywords = ["glassmorphism", "market UI", "chart glow", "directional arrows", "editorial finance"]
+            tone = "Analytical, premium, and composed"
+        else:
+            format_hint = "Editorial business explainer with restrained motion graphics"
+            story_angle = (
+                f"Explain {truncate_for_prompt(headline, 78)} as a direct business update focused on the main actor, the immediate development, "
+                "and the most relevant practical implication."
+            )
+            visual_brief = (
+                "Use clean editorial panels, restrained data callouts, and modern newsroom typography. "
+                "Keep it premium and informative without forcing a market-terminal aesthetic."
+            )
+            motion_treatment = "Use restrained panel motion, subtle text emphasis, and clear sequencing over flashy chart choreography."
+            transition_style = "Editorial panel slides, crisp fades, and minimal stat reveals."
+            scene_sequence = [
+                "Open with the key business development in one clean headline panel.",
+                f"Add the clearest supporting detail with a labeled explainer card: {top_key_point}.",
+                f"Close on the practical implication or next decision to watch: {truncate_for_prompt(why_it_matters, 96)}.",
+            ]
+            design_keywords = ["editorial business", "clean panels", "newsroom typography", "restrained motion", "clear labels"]
+            tone = "Clear, premium, and informative"
         must_include = dedupe_preserve_order(
-            focus_names[:2] + ([numeric_phrase] if numeric_phrase else []) + representative_titles[:2]
+            focus_names[:2] + ([numeric_phrase] if numeric_phrase and story_subtype == "market" else []) + representative_titles[:2]
         )
-        tone = "Analytical, premium, and composed"
     elif category == "science":
         format_hint = "Cinematic editorial science explainer"
         story_angle = (
@@ -1481,6 +1940,14 @@ def build_fallback_video_plan(
         key_points=clean_points,
         score=entities["score"],
     )
+    story_subtype = infer_story_subtype(
+        category=category,
+        headline=clean_headline,
+        summary=clean_summary or summary,
+        key_points=clean_points,
+        comparison_story=comparison_story,
+    )
+    comparison_story = story_subtype == "matchup"
     duration_seconds = clamp_video_duration(prompt_parts.duration_seconds)
     scene_count = suggest_scene_count(
         clean_summary or summary,
@@ -1671,6 +2138,16 @@ def coerce_video_plan(
         summary=summary,
         key_points=key_points,
         score=extract_score([headline, summary, *key_points]),
+    )
+    comparison_story = (
+        infer_story_subtype(
+            category=category,
+            headline=headline,
+            summary=summary,
+            key_points=key_points,
+            comparison_story=comparison_story,
+        )
+        == "matchup"
     )
 
     for index, item in enumerate(raw_scenes[:4]):
@@ -1950,7 +2427,15 @@ def build_fallback_topic(
     )
     remotion_storyboard = RemotionStoryboardService().build_storyboard(remotion_context)
 
-    return TopicBrief(
+    if topic_render_rejection_reason(
+        aggregation_type=aggregation_type,
+        headline=headline_tr,
+        summary=summary_tr,
+        key_points=key_points_tr,
+    ):
+        return None
+
+    topic = TopicBrief(
         topic_id=build_topic_id(cluster),
         category=category,
         aggregation_type=aggregation_type,
@@ -1970,6 +2455,14 @@ def build_fallback_topic(
         video_content=video_content,
         remotion_storyboard=remotion_storyboard,
     )
+    if topic_render_rejection_reason(
+        aggregation_type=aggregation_type,
+        headline=topic.headline_tr,
+        summary=topic.summary_tr,
+        key_points=topic.key_points_tr,
+    ):
+        return fallback_topic
+    return topic
 
 
 def build_topic_id(cluster: list[PreparedArticle]) -> str:
@@ -2042,10 +2535,12 @@ def build_analysis_debug(
     articles: list[Article],
     prepared_articles: list[PreparedArticle],
     candidate_clusters: list[list[PreparedArticle]],
+    rejections: list[AnalysisRejection] | None = None,
     notes: list[str] | None = None,
     ollama_error: str | None = None,
     shared_topics_generated: int = 0,
     unique_topics_generated: int = 0,
+    rejected_unique_candidates: int = 0,
     dropped_unique_articles: int = 0,
 ) -> AnalysisDebug:
     source_counter: dict[tuple[str, str], int] = defaultdict(int)
@@ -2078,18 +2573,27 @@ def build_analysis_debug(
 
     single_source_clusters = sum(1 for cluster in candidate_clusters if not is_shared_cluster(cluster))
     multi_source_clusters = len(candidate_clusters) - single_source_clusters
+    rejection_counts: dict[str, int] = defaultdict(int)
+    for rejection in rejections or []:
+        rejection_counts[rejection.reason] += 1
 
     return AnalysisDebug(
         fetched_articles=len(articles),
         prepared_articles=len(prepared_articles),
+        rejected_articles=sum(1 for rejection in (rejections or []) if rejection.stage == "article"),
         candidate_clusters=len(candidate_clusters),
         multi_source_clusters=multi_source_clusters,
         single_source_clusters=single_source_clusters,
         shared_topics_generated=shared_topics_generated,
         unique_topics_generated=unique_topics_generated,
+        rejected_unique_candidates=rejected_unique_candidates,
         dropped_unique_articles=dropped_unique_articles,
         source_breakdown=source_breakdown,
         cluster_previews=cluster_previews,
+        rejection_breakdown=[
+            AnalysisRejectionDebug(reason=reason, count=count)
+            for reason, count in sorted(rejection_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
         notes=notes or [],
         ollama_base_url=settings.OLLAMA_BASE_URL,
         ollama_error=ollama_error,
@@ -2302,12 +2806,15 @@ async def generate_topic_briefs(
         hours=hours,
         window_end=window_end,
     )
-    prepared_articles = await build_prepared_articles(articles, category_filter=category)
+    prepared_result = await build_prepared_articles(articles, category_filter=category)
+    prepared_articles = prepared_result.prepared_articles
+    analysis_rejections = list(prepared_result.rejections)
     candidate_clusters = build_candidate_clusters(prepared_articles)
     debug_notes: list[str] = []
     ollama_error: str | None = None
     shared_topics_generated = 0
     unique_topics_generated = 0
+    rejected_unique_candidates = 0
     dropped_unique_articles = 0
     if include_debug:
         debug_notes.append(
@@ -2327,9 +2834,11 @@ async def generate_topic_briefs(
                 articles=articles,
                 prepared_articles=prepared_articles,
                 candidate_clusters=candidate_clusters,
+                rejections=analysis_rejections,
                 notes=debug_notes,
                 shared_topics_generated=shared_topics_generated,
                 unique_topics_generated=unique_topics_generated,
+                rejected_unique_candidates=rejected_unique_candidates,
                 dropped_unique_articles=dropped_unique_articles,
             )
             if include_debug
@@ -2348,9 +2857,11 @@ async def generate_topic_briefs(
                 articles=articles,
                 prepared_articles=prepared_articles,
                 candidate_clusters=candidate_clusters,
+                rejections=analysis_rejections,
                 notes=debug_notes,
                 shared_topics_generated=shared_topics_generated,
                 unique_topics_generated=unique_topics_generated,
+                rejected_unique_candidates=rejected_unique_candidates,
                 dropped_unique_articles=dropped_unique_articles,
             )
             if include_debug
@@ -2424,6 +2935,19 @@ async def generate_topic_briefs(
             continue
 
     for cluster in unique_candidate_clusters:
+        rejection_reason = unique_candidate_rejection_reason(cluster)
+        if rejection_reason:
+            representative = cluster[0].article
+            analysis_rejections.append(
+                make_rejection(
+                    rejection_reason,
+                    stage="unique_candidate",
+                    title=representative.title,
+                    url=representative.url,
+                )
+            )
+            rejected_unique_candidates += 1
+            continue
         visual_assets = await resolve_visual_assets_for_cluster(cluster, asset_resolver)
         unique_topic = build_fallback_topic(
             cluster,
@@ -2433,6 +2957,17 @@ async def generate_topic_briefs(
         if unique_topic:
             topics.append(unique_topic)
             unique_topics_generated += 1
+        else:
+            representative = cluster[0].article
+            analysis_rejections.append(
+                make_rejection(
+                    "low_signal_unique",
+                    stage="unique_candidate",
+                    title=representative.title,
+                    url=representative.url,
+                )
+            )
+            rejected_unique_candidates += 1
 
     total_unique_candidate_articles = sum(len(cluster) for cluster in unique_candidate_clusters)
 
@@ -2474,6 +3009,15 @@ async def generate_topic_briefs(
             debug_notes.append(
                 f"{dropped_unique_articles} unique article(s) were omitted from the final response after applying limit_topics={limit_topics}."
             )
+        if rejected_unique_candidates:
+            debug_notes.append(
+                f"{rejected_unique_candidates} unique candidate(s) were rejected by quality guardrails before rendering."
+            )
+        rejected_articles = sum(1 for rejection in analysis_rejections if rejection.stage == "article")
+        if rejected_articles:
+            debug_notes.append(
+                f"{rejected_articles} article(s) were filtered out before clustering because they looked non-news, stale, or malformed."
+            )
 
     return TopicBriefsResponse(
         analysis_status=analysis_status,
@@ -2485,10 +3029,12 @@ async def generate_topic_briefs(
             articles=articles,
             prepared_articles=prepared_articles,
             candidate_clusters=candidate_clusters,
+            rejections=analysis_rejections,
             notes=debug_notes,
             ollama_error=ollama_error,
             shared_topics_generated=shared_topics_generated,
             unique_topics_generated=unique_topics_generated,
+            rejected_unique_candidates=rejected_unique_candidates,
             dropped_unique_articles=dropped_unique_articles,
         )
         if include_debug

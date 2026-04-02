@@ -360,6 +360,246 @@ SOURCES = [
 ]
 
 
+SOURCE_DISCOVERY_OVERRIDES = {
+    "reuters": {
+        "scraper_type": "rss",
+        "config": {
+            "section_urls": [
+                {"url": "https://www.reuters.com/world/", "category": "world"},
+                {"url": "https://www.reuters.com/business/", "category": "business"},
+                {"url": "https://www.reuters.com/technology/", "category": "technology"},
+            ],
+            "discovery_priority": ["rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/graphics/", "/pictures/"],
+            "require_date_path": True,
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 12,
+        },
+    },
+    "apnews": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://apnews.com/sitemap.xml"],
+            "section_urls": [
+                {"url": "https://apnews.com/world-news", "category": "world"},
+                {"url": "https://apnews.com/business", "category": "business"},
+                {"url": "https://apnews.com/politics", "category": "politics"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/hub/", "/test-page/"],
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 12,
+        },
+    },
+    "france24": {
+        "scraper_type": "rss",
+        "config": {
+            "section_urls": [
+                {"url": "https://www.france24.com/en/world/", "category": "world"},
+                {"url": "https://www.france24.com/en/business/", "category": "business"},
+                {"url": "https://www.france24.com/en/middle-east/", "category": "world"},
+            ],
+            "discovery_priority": ["rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "require_date_path": True,
+            "exclude_url_substrings": [
+                "/replay/",
+                "/sponsored",
+                "/news-alerts",
+                "/settings",
+                "/programs/",
+            ],
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 10,
+        },
+    },
+    "bbc": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.bbc.com/sitemaps/https-index-com-news.xml"],
+            "section_urls": [
+                {"url": "https://www.bbc.com/news/world", "category": "world"},
+                {"url": "https://www.bbc.com/news/business", "category": "business"},
+                {"url": "https://www.bbc.com/news/technology", "category": "technology"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/newsround/", "/sport/", "/sounds/", "/iplayer/"],
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 12,
+        },
+    },
+    "aljazeera": {
+        "scraper_type": "rss",
+        "config": {
+            "section_urls": [
+                {"url": "https://www.aljazeera.com/news/", "category": "world"},
+                {"url": "https://www.aljazeera.com/economy/", "category": "business"},
+            ],
+            "discovery_priority": ["rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/features/", "/opinions/", "/program/"],
+            "require_date_path": True,
+            "max_links_per_section": 10,
+            "max_detail_enrichment_articles": 10,
+        },
+    },
+    "guardian": {
+        "scraper_type": "api",
+        "config": {
+            "api_base_url": "https://content.guardianapis.com",
+            "api_key_env": "GUARDIAN_API_KEY",
+            "api_sections": [
+                {"section": "world", "category": "world"},
+                {"section": "politics", "category": "politics"},
+                {"section": "business", "category": "business"},
+                {"section": "technology", "category": "technology"},
+                {"section": "sport", "category": "sports"},
+                {"section": "culture", "category": "entertainment"},
+                {"section": "science", "category": "science"},
+                {"section": "society", "category": "health"},
+                {"section": "commentisfree", "category": "opinion"},
+            ],
+            "discovery_priority": ["api", "rss"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+        },
+    },
+    "abcnews": {
+        "scraper_type": "rss",
+        "config": {
+            "section_urls": [
+                {"url": "https://abcnews.go.com/International", "category": "world"},
+                {"url": "https://abcnews.go.com/Politics", "category": "politics"},
+                {"url": "https://abcnews.go.com/Business", "category": "business"},
+            ],
+            "discovery_priority": ["rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/video/", "/gma3/", "/538/"],
+            "skip_detail_url_substrings": ["/video/", "/videos/"],
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 10,
+        },
+    },
+    "cbsnews": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.cbsnews.com/sitemaps/google-news.xml", "https://www.cbsnews.com/sitemap.xml"],
+            "section_urls": [
+                {"url": "https://www.cbsnews.com/world/", "category": "world"},
+                {"url": "https://www.cbsnews.com/politics/", "category": "politics"},
+                {"url": "https://www.cbsnews.com/moneywatch/", "category": "business"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/essentials/", "/video/"],
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 10,
+        },
+    },
+    "pbs": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.pbs.org/newshour/sitemaps.xml"],
+            "section_urls": [
+                {"url": "https://www.pbs.org/newshour/world", "category": "world"},
+                {"url": "https://www.pbs.org/newshour/politics", "category": "politics"},
+                {"url": "https://www.pbs.org/newshour/economy", "category": "business"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss", "section_html"],
+            "detail_policy": "open_page_only",
+            "respect_robots": True,
+            "exclude_url_substrings": ["/show/", "/classroom/", "/video/"],
+            "max_links_per_section": 12,
+            "max_detail_enrichment_articles": 10,
+        },
+    },
+    "bloomberg": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.bloomberg.com/sitemap.xml"],
+            "section_urls": [
+                {"url": "https://www.bloomberg.com/markets", "category": "business"},
+                {"url": "https://www.bloomberg.com/politics", "category": "politics"},
+                {"url": "https://www.bloomberg.com/technology", "category": "technology"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss"],
+            "detail_policy": "metadata_only",
+            "respect_robots": True,
+        },
+    },
+    "ft": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.ft.com/sitemaps/news.xml", "https://www.ft.com/sitemaps.xml"],
+            "section_urls": [
+                {"url": "https://www.ft.com/world", "category": "world"},
+                {"url": "https://www.ft.com/companies", "category": "business"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss"],
+            "detail_policy": "metadata_only",
+            "respect_robots": True,
+        },
+    },
+    "wsj": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.wsj.com/xml/sitemap.xml"],
+            "section_urls": [
+                {"url": "https://www.wsj.com/world", "category": "world"},
+                {"url": "https://www.wsj.com/business", "category": "business"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss"],
+            "detail_policy": "metadata_only",
+            "respect_robots": True,
+        },
+    },
+    "economist": {
+        "scraper_type": "news_sitemap",
+        "config": {
+            "sitemap_urls": ["https://www.economist.com/sitemaps.xml"],
+            "section_urls": [
+                {"url": "https://www.economist.com/international", "category": "world"},
+                {"url": "https://www.economist.com/business", "category": "business"},
+            ],
+            "discovery_priority": ["news_sitemap", "rss"],
+            "detail_policy": "metadata_only",
+            "respect_robots": True,
+        },
+    },
+}
+
+
+def build_source_payload(source_data: dict) -> dict:
+    override = SOURCE_DISCOVERY_OVERRIDES.get(source_data["slug"], {})
+    payload = dict(source_data)
+
+    base_config = dict(payload.get("config") or {})
+    override_config = dict(override.get("config") or {})
+    merged_config = {**base_config, **override_config}
+
+    for key, value in override.items():
+        if key == "config":
+            continue
+        payload[key] = value
+
+    if merged_config:
+        payload["config"] = merged_config
+
+    payload.setdefault("scraper_type", "rss")
+
+    return payload
+
+
 async def seed():
     async with async_session_factory() as session:
         for source_data in SOURCES:
@@ -370,12 +610,12 @@ async def seed():
                 print(f"  Skipping {source_data['slug']} (already exists)")
                 continue
 
+            payload = build_source_payload(source_data)
             source = Source(
-                scraper_type="rss",
                 scrape_interval_minutes=60,
                 rate_limit_rpm=10,
                 is_active=True,
-                **source_data,
+                **payload,
             )
             session.add(source)
             print(f"  Added {source_data['name']}")

@@ -55,6 +55,7 @@ DEBUG=true
 SCRAPE_INTERVAL_MINUTES=60
 DEFAULT_RATE_LIMIT_RPM=10
 USER_AGENT=GaseNewsScraper/1.0
+GUARDIAN_API_KEY=
 OLLAMA_BASE_URL=http://192.168.1.104:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
 ANALYSIS_MIN_SHARED_SOURCES=2
@@ -104,7 +105,12 @@ docker compose exec api alembic upgrade head
 
 ### 5. Haber kaynaklarini seed et
 
-13 haber kaynagini veritabanina ekler (RSS feed URL'leri ile birlikte):
+Kaynaklari veritabanina ekler. Sistem artik RSS disinda su discovery yontemlerini de config uzerinden destekler:
+
+- `api`
+- `news_sitemap`
+- `section_html`
+- `rss` fallback
 
 ```bash
 make seed
@@ -172,6 +178,26 @@ GET  /api/v1/scrape-runs           → Scrape gecmisi
 GET  /api/v1/scrape-runs/latest    → Her kaynak icin son scrape
 GET  /api/v1/scrape-runs/dashboard → Dashboard istatistikleri
 ```
+
+### RSS Disi Discovery
+
+Kaynak bazli toplama akisi artik `scraper_type` ve `source.config` ile belirlenir.
+
+- `The Guardian`: resmi Open Platform API, sonra RSS fallback
+- `Reuters`, `AP`, `BBC`, `Al Jazeera`, `ABC`, `CBS`, `PBS`, `France24`: news sitemap / section HTML, sonra RSS fallback
+- `Bloomberg`, `FT`, `WSJ`, `Economist`: compliance-first `metadata_only`
+
+`source.config` icinde kullanilan baslica alanlar:
+
+- `discovery_priority`
+- `sitemap_urls`
+- `section_urls`
+- `api_base_url`
+- `api_key_env`
+- `detail_policy`: `open_page_only | metadata_only`
+- `respect_robots`
+
+Scrape run kayitlari da artik `discovery_method_used`, `detail_enriched_count` ve `metadata_only_count` alanlarini tutar.
 
 ### Ornek API Kullanimi
 

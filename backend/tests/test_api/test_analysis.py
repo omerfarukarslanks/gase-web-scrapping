@@ -389,6 +389,67 @@ def test_build_contextual_prompt_parts_for_non_score_sports_story_avoids_fake_ma
     assert "portrait" in prompt_parts.visual_brief.lower()
 
 
+def test_build_contextual_prompt_parts_for_schedule_story_avoids_scoreboard_frame() -> None:
+    first = make_prepared_article(
+        title="MI IPL 2026 full schedule: Check dates, venues and home-away fixtures of Mumbai Indians",
+        summary="Mumbai Indians open their 2026 campaign on March 29 at Wankhede against Kolkata Knight Riders.",
+        source_name="Yahoo Sports",
+        source_slug="yahoo-sports",
+        normalized_category="sports",
+    )
+    second = make_prepared_article(
+        title="Mumbai Indians confirm dates and venues for 2026 IPL fixtures",
+        summary="The fixture list lays out dates, venues and home-away splits for Mumbai's campaign.",
+        source_name="CBS Sports",
+        source_slug="cbs-sports",
+        normalized_category="sports",
+    )
+
+    prompt_parts = build_contextual_prompt_parts(
+        [first, second],
+        category="sports",
+        headline=first.article.title,
+        summary=first.article.summary or "",
+        key_points=["Mumbai opens on March 29 at Wankhede.", "The schedule includes home-away splits."],
+        why_it_matters="The fixture order shapes the early path of Mumbai's season.",
+    )
+
+    assert "schedule-driven sports update" in prompt_parts.story_angle.lower()
+    assert "date and venue" in prompt_parts.story_angle.lower()
+    assert all("scoreboard" not in scene.lower() for scene in prompt_parts.scene_sequence)
+    assert "scoreboard" not in prompt_parts.visual_brief.lower()
+
+
+def test_build_contextual_prompt_parts_for_business_non_market_story_avoids_terminal_frame() -> None:
+    first = make_prepared_article(
+        title="MPS turmoil could turn it from predator to prey",
+        summary="A strategic rethink could leave the bank vulnerable to a takeover instead of expansion.",
+        source_name="Financial Times",
+        source_slug="ft",
+        normalized_category="business",
+    )
+    second = make_prepared_article(
+        title="Bank turmoil leaves MPS exposed to outside pressure",
+        summary="A second report says the bank's instability is changing its options and bargaining power.",
+        source_name="Reuters",
+        source_slug="reuters",
+        normalized_category="business",
+    )
+
+    prompt_parts = build_contextual_prompt_parts(
+        [first, second],
+        category="business",
+        headline=first.article.title,
+        summary=first.article.summary or "",
+        key_points=["The bank's leverage is weakening."],
+        why_it_matters="The next strategic decision could change who controls the bank.",
+    )
+
+    assert prompt_parts.format_hint == "Editorial business explainer with restrained motion graphics"
+    assert "market narrative" not in prompt_parts.story_angle.lower()
+    assert "market-terminal aesthetic" in prompt_parts.visual_brief.lower()
+
+
 def test_build_video_prompt_from_parts_prefers_human_guidance_over_rigid_checklists() -> None:
     prompt = build_video_prompt_from_parts(
         VideoPromptParts(
@@ -1187,6 +1248,148 @@ async def test_topic_briefs_endpoint_returns_unique_topic_for_unclustered_single
     assert topic["source_count"] == 1
     assert topic["article_count"] == 1
     assert len(topic["representative_articles"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_topic_briefs_endpoint_filters_non_news_utility_pages_from_unique_topics(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    bloomberg = await create_source(db_session, slug="bloomberg", name="Bloomberg", category="finance")
+    ap = await create_source(db_session, slug="ap", name="AP News", category="general")
+
+    for title, url in [
+        ("subscriptions", "https://www.bloomberg.com/subscriptions"),
+        ("workwise", "https://www.bloomberg.com/workwise"),
+        ("wealthscore financial health calculator", "https://www.bloomberg.com/wealthscore-financial-health-calculator"),
+    ]:
+        await create_article(
+            db_session,
+            source=bloomberg,
+            title=title,
+            url=url,
+            source_category="finance",
+            summary=title,
+            published_at=now - timedelta(minutes=8),
+            created_at=now - timedelta(minutes=8),
+            category="business",
+        )
+
+    await create_article(
+        db_session,
+        source=ap,
+        title="Mayor announces flood cleanup fund after weekend damage",
+        url="https://ap.example.com/2026/04/02/flood-cleanup-fund",
+        source_category="general",
+        summary="A mayor announced a cleanup fund after severe weekend flood damage.",
+        published_at=now - timedelta(minutes=6),
+        created_at=now - timedelta(minutes=6),
+        category="general",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3, "debug": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    topics = [topic for group in payload["groups"] for topic in group["topics"]]
+    assert len(topics) == 1
+    assert topics[0]["headline_tr"] == "Mayor announces flood cleanup fund after weekend damage"
+    assert payload["debug"]["rejected_articles"] >= 3
+    assert payload["debug"]["rejected_unique_candidates"] == 0
+    rejection_breakdown = {item["reason"]: item["count"] for item in payload["debug"]["rejection_breakdown"]}
+    assert rejection_breakdown["utility_or_hub_page"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_topic_briefs_endpoint_rejects_old_year_evergreen_title_in_recent_window(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    bloomberg = await create_source(db_session, slug="bloomberg", name="Bloomberg", category="finance")
+
+    await create_article(
+        db_session,
+        source=bloomberg,
+        title="2020 China consumer outlook special report",
+        url="https://www.bloomberg.com/articles/2020-china-consumer-outlook-special-report-123456",
+        source_category="finance",
+        summary="An old evergreen feature surfaced in a recent scrape.",
+        published_at=now - timedelta(minutes=7),
+        created_at=now - timedelta(minutes=7),
+        category="business",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3, "debug": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["groups"] == []
+    rejection_breakdown = {item["reason"]: item["count"] for item in payload["debug"]["rejection_breakdown"]}
+    assert rejection_breakdown["stale_or_evergreen"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_topic_briefs_endpoint_decodes_html_entities_without_leaking_numeric_artifacts(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    sky = await create_source(db_session, slug="skysports", name="Sky Sports", category="sports")
+
+    await create_article(
+        db_session,
+        source=sky,
+        title="Wilder gunning for Usyk: 'It can and will happen'",
+        url="https://www.skysports.com/boxing/news/2026/04/02/wilder-usyk-it-can-and-will-happen",
+        source_category="sports",
+        summary="Deontay Wilder believes he&#8217;s one victory away from challenging unified heavyweight champion Oleksandr Usyk.",
+        published_at=now - timedelta(minutes=5),
+        created_at=now - timedelta(minutes=5),
+        category="sports",
+        image_url="https://example.com/wilder.jpg",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3, "debug": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    topic = payload["groups"][0]["topics"][0]
+    assert "8217" not in topic["summary_tr"]
+    assert "8217" not in topic["video_content"]["key_data"]
+    assert "he's one victory away" in topic["summary_tr"].lower()
+    assert payload["debug"]["rejected_articles"] == 0
 
 
 @pytest.mark.asyncio

@@ -4,18 +4,15 @@ import sys
 
 from sqlalchemy import select
 
-from app.db.session import async_session_factory
+from app.db.session import async_session_factory, engine
 from app.models import Article, ScrapeRun, Source  # noqa: F401
-from app.services.scraper_orchestrator import scrape_all_sources, scrape_source
+from app.services.scraper_orchestrator import scrape_source
 
 
 async def run(slug: str | None = None):
+    engine.echo = False
     async with async_session_factory() as db:
-        # Kaynak adlarini ONCEDEN yukle — lazy load yasagi nedeniyle
-        all_sources_result = await db.execute(select(Source))
-        source_map: dict[str, str] = {
-            str(s.id): s.name for s in all_sources_result.scalars().all()
-        }
+        summary = []
 
         if slug:
             result = await db.execute(select(Source).where(Source.slug == slug))
@@ -23,27 +20,59 @@ async def run(slug: str | None = None):
             if not source:
                 print(f"Kaynak bulunamadi: {slug}")
                 return
-            runs = [await scrape_source(db, source)]
+            print(f"[1/1] {source.name} ({source.slug}) scrape basladi...", flush=True)
+            run = await scrape_source(db, source)
+            await db.commit()
+            summary.append(
+                {
+                    "source": source.name,
+                    "status": run.status,
+                    "found": run.articles_found,
+                    "new": run.articles_new,
+                    "duration": run.duration_seconds,
+                    "method": run.discovery_method_used,
+                }
+            )
+            sure = f"{run.duration_seconds:.1f}s" if run.duration_seconds else "-"
+            print(
+                f"[1/1] tamamlandi: durum={run.status} bulunan={run.articles_found} "
+                f"yeni={run.articles_new} yontem={run.discovery_method_used or '-'} sure={sure}",
+                flush=True,
+            )
         else:
-            runs = await scrape_all_sources(db)
+            result = await db.execute(
+                select(Source)
+                .where(Source.is_active.is_(True))
+                .order_by(Source.name.asc())
+            )
+            sources = list(result.scalars().all())
+            total = len(sources)
 
-        # commit'ten ONCE run verilerini topla (nesne expire olmadan)
-        summary = [
-            {
-                "source": source_map.get(str(r.source_id), str(r.source_id)),
-                "status": r.status,
-                "found": r.articles_found,
-                "new": r.articles_new,
-                "duration": r.duration_seconds,
-            }
-            for r in runs
-        ]
+            for index, source in enumerate(sources, start=1):
+                print(f"[{index}/{total}] {source.name} ({source.slug}) scrape basladi...", flush=True)
+                run = await scrape_source(db, source)
+                summary.append(
+                    {
+                        "source": source.name,
+                        "status": run.status,
+                        "found": run.articles_found,
+                        "new": run.articles_new,
+                        "duration": run.duration_seconds,
+                        "method": run.discovery_method_used,
+                    }
+                )
+                await db.commit()
 
-        await db.commit()
+                sure = f"{run.duration_seconds:.1f}s" if run.duration_seconds else "-"
+                print(
+                    f"[{index}/{total}] tamamlandi: durum={run.status} bulunan={run.articles_found} "
+                    f"yeni={run.articles_new} yontem={run.discovery_method_used or '-'} sure={sure}",
+                    flush=True,
+                )
 
-    print(f"\n{'='*52}")
-    print(f"{'Kaynak':<20} {'Durum':<12} {'Bulunan':>8} {'Yeni':>6} {'Sure':>8}")
-    print(f"{'='*52}")
+    print(f"\n{'='*72}")
+    print(f"{'Kaynak':<20} {'Durum':<12} {'Bulunan':>8} {'Yeni':>6} {'Yontem':<14} {'Sure':>8}")
+    print(f"{'='*72}")
     for row in summary:
         sure = f"{row['duration']:.1f}s" if row["duration"] else "-"
         print(
@@ -51,9 +80,10 @@ async def run(slug: str | None = None):
             f"{row['status']:<12} "
             f"{row['found']:>8} "
             f"{row['new']:>6} "
+            f"{(row['method'] or '-'): <14}"
             f"{sure:>8}"
         )
-    print(f"{'='*52}")
+    print(f"{'='*72}")
     print(f"Toplam {len(summary)} kaynak islendi.")
 
 

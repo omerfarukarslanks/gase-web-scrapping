@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SCRAPE_INTERVAL_MINUTES: int = 60
     DEFAULT_RATE_LIMIT_RPM: int = 10
     USER_AGENT: str = "GaseNewsScraper/1.0"
+    GUARDIAN_API_KEY: str | None = None
 
     # Analysis
     OLLAMA_BASE_URL: str = "http://ollama:11434"

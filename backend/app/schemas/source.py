@@ -34,6 +34,7 @@ class SourceUpdate(BaseModel):
     scrape_interval_minutes: int | None = None
     rate_limit_rpm: int | None = None
     rss_feeds: list[RssFeedEntry | str] | None = None
+    scraper_type: str | None = None
     config: dict | None = None
 
 

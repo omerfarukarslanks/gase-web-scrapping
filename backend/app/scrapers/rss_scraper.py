@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 import feedparser
@@ -84,9 +85,16 @@ class RSSNewsScraper(BaseNewsScraper):
         """Extract summary/description from feed entry."""
         summary = getattr(entry, "summary", None) or getattr(entry, "description", None)
         if summary:
-            # Strip HTML tags for clean text
-            from bs4 import BeautifulSoup
-            return BeautifulSoup(summary, "lxml").get_text(strip=True)[:1000]
+            clean_summary = str(summary).strip()
+            if not clean_summary:
+                return None
+
+            # Only invoke HTML parsing when the payload actually resembles markup.
+            if "<" in clean_summary and ">" in clean_summary:
+                from bs4 import BeautifulSoup
+                return BeautifulSoup(clean_summary, "lxml").get_text(strip=True)[:1000]
+
+            return re.sub(r"\s+", " ", clean_summary)[:1000]
         return None
 
     def parse_entry(self, entry, feed_category: str | None = None) -> ScrapedArticle | None:

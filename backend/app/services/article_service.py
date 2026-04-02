@@ -89,6 +89,21 @@ async def article_exists(db: AsyncSession, url: str) -> bool:
     return (result.scalar() or 0) > 0
 
 
+async def existing_url_hashes(db: AsyncSession, urls: list[str]) -> set[str]:
+    """Return URL hashes that already exist for a batch of article URLs."""
+    if not urls:
+        return set()
+
+    hashed_urls = {hash_url(url) for url in urls if url}
+    if not hashed_urls:
+        return set()
+
+    result = await db.execute(
+        select(Article.url_hash).where(Article.url_hash.in_(hashed_urls))
+    )
+    return {row[0] for row in result.all() if row[0]}
+
+
 async def create_article(db: AsyncSession, **kwargs) -> Article:
     """Create article with automatic URL hashing."""
     kwargs["url_hash"] = hash_url(kwargs["url"])

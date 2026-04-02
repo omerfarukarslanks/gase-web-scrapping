@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 
 from app.db.session import async_session_factory
 from app.models import Article, ScrapeRun, Source  # noqa: F401 - registers all models
-from scripts.seed_sources import SOURCES
+from scripts.seed_sources import SOURCES, build_source_payload
 
 # Kaldırılacak kaynaklar (slug listesi)
 # lequipe: 404, cricbuzz: 403, globo: 404
@@ -20,7 +20,7 @@ ADD_SLUGS = []
 
 # Guncellenecek feed'ler (slug -> yeni rss_feeds listesi)
 UPDATE_FEEDS = {
-    slug: next((s["rss_feeds"] for s in SOURCES if s["slug"] == slug), None)
+    slug: next((build_source_payload(s)["rss_feeds"] for s in SOURCES if s["slug"] == slug), None)
     for slug in ["apnews", "france24", "aljazeera", "ft", "marca"]
 }
 
@@ -72,16 +72,16 @@ async def fix():
             if not source_data:
                 print(f"  [SKIP] '{slug}' seed_sources.py'de tanimli degil")
                 continue
+            payload = build_source_payload(source_data)
             existing = await session.execute(select(Source).where(Source.slug == slug))
             if existing.scalar_one_or_none():
                 print(f"  [SKIP] '{slug}' zaten DB'de mevcut")
                 continue
             source = Source(
-                scraper_type="rss",
                 scrape_interval_minutes=60,
                 rate_limit_rpm=10,
                 is_active=True,
-                **source_data,
+                **payload,
             )
             session.add(source)
             print(f"  [ADD] '{source_data['name']}' eklendi")

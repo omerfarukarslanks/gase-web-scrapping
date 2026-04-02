@@ -140,17 +140,25 @@ class AnalysisClusterDebug(BaseModel):
     sample_titles: list[str] = Field(default_factory=list)
 
 
+class AnalysisRejectionDebug(BaseModel):
+    reason: str
+    count: int
+
+
 class AnalysisDebug(BaseModel):
     fetched_articles: int = 0
     prepared_articles: int = 0
+    rejected_articles: int = 0
     candidate_clusters: int = 0
     multi_source_clusters: int = 0
     single_source_clusters: int = 0
     shared_topics_generated: int = 0
     unique_topics_generated: int = 0
+    rejected_unique_candidates: int = 0
     dropped_unique_articles: int = 0
     source_breakdown: list[AnalysisSourceDebug] = Field(default_factory=list)
     cluster_previews: list[AnalysisClusterDebug] = Field(default_factory=list)
+    rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     ollama_base_url: str | None = None
     ollama_error: str | None = None

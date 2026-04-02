@@ -11,6 +11,9 @@ class ScrapeRunResponse(BaseModel):
     articles_found: int
     articles_new: int
     articles_updated: int
+    detail_enriched_count: int
+    metadata_only_count: int
+    discovery_method_used: str | None = None
     error_message: str | None = None
     started_at: datetime
     completed_at: datetime | None = None
