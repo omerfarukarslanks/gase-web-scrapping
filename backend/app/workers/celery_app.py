@@ -31,6 +31,11 @@ celery_app.conf.beat_schedule = {
         "schedule": settings.SCRAPE_INTERVAL_MINUTES * 60,
         "args": ["finance"],
     },
+    "scrape-sports-news": {
+        "task": "app.workers.scrape_tasks.scrape_by_category",
+        "schedule": settings.SCRAPE_INTERVAL_MINUTES * 60,
+        "args": ["sports"],
+    },
     "cleanup-old-articles": {
         "task": "app.workers.scrape_tasks.cleanup_old_articles",
         "schedule": 86400.0,  # Daily

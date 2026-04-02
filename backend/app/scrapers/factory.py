@@ -1,13 +1,13 @@
 from app.models.source import Source
 from app.scrapers.base import BaseNewsScraper
 from app.scrapers.sources.abcnews import ABCNewsScraper
-from app.scrapers.sources.afp import AFPScraper
 from app.scrapers.sources.aljazeera import AlJazeeraScraper
 from app.scrapers.sources.apnews import APNewsScraper
 from app.scrapers.sources.bbc import BBCScraper
 from app.scrapers.sources.bloomberg import BloombergScraper
 from app.scrapers.sources.cbsnews import CBSNewsScraper
 from app.scrapers.sources.economist import EconomistScraper
+from app.scrapers.sources.france24 import France24Scraper
 from app.scrapers.sources.ft import FTScraper
 from app.scrapers.sources.guardian import GuardianScraper
 from app.scrapers.sources.pbs import PBSScraper
@@ -17,7 +17,7 @@ from app.scrapers.sources.wsj import WSJScraper
 SCRAPER_MAP: dict[str, type[BaseNewsScraper]] = {
     "reuters": ReutersScraper,
     "apnews": APNewsScraper,
-    "afp": AFPScraper,
+    "france24": France24Scraper,
     "bbc": BBCScraper,
     "aljazeera": AlJazeeraScraper,
     "guardian": GuardianScraper,

@@ -4,11 +4,18 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class RssFeedEntry(BaseModel):
+    """Kategorize edilmis RSS feed girisi: {"url": "...", "category": "..."}"""
+    url: str
+    category: str | None = None
+
+
 class SourceBase(BaseModel):
     name: str
     slug: str
     base_url: str
-    rss_feeds: list[str] = []
+    # Geriye donuk uyumluluk: eski format str listesi, yeni format dict listesi
+    rss_feeds: list[RssFeedEntry | str] = []
     scraper_type: str = "rss"
     category: str = "general"
     is_active: bool = True
@@ -26,7 +33,7 @@ class SourceUpdate(BaseModel):
     is_active: bool | None = None
     scrape_interval_minutes: int | None = None
     rate_limit_rpm: int | None = None
-    rss_feeds: list[str] | None = None
+    rss_feeds: list[RssFeedEntry | str] | None = None
     config: dict | None = None
 
 

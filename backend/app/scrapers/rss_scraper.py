@@ -14,12 +14,25 @@ logger = logging.getLogger(__name__)
 class RSSNewsScraper(BaseNewsScraper):
     """Generic RSS/Atom feed scraper. Source-specific scrapers subclass this."""
 
-    def get_feed_urls(self) -> list[str]:
-        """Return list of RSS feed URLs to scrape."""
-        return self.source.rss_feeds or []
+    def get_feeds(self) -> list[dict]:
+        """Return list of feed dicts: [{"url": "...", "category": "..."}].
+
+        Supports both legacy (flat string list) and new (dict list) formats.
+        """
+        feeds = self.source.rss_feeds or []
+        result = []
+        for feed in feeds:
+            if isinstance(feed, str):
+                result.append({"url": feed, "category": None})
+            elif isinstance(feed, dict):
+                result.append({
+                    "url": feed.get("url", ""),
+                    "category": feed.get("category"),
+                })
+        return result
 
     def parse_category(self, entry) -> str | None:
-        """Extract category from feed entry. Override for source-specific logic."""
+        """Extract category from feed entry tags. Override for source-specific logic."""
         if hasattr(entry, "tags") and entry.tags:
             return entry.tags[0].get("term", None)
         return None
@@ -76,13 +89,19 @@ class RSSNewsScraper(BaseNewsScraper):
             return BeautifulSoup(summary, "lxml").get_text(strip=True)[:1000]
         return None
 
-    def parse_entry(self, entry) -> ScrapedArticle | None:
-        """Parse a single feed entry into a ScrapedArticle."""
+    def parse_entry(self, entry, feed_category: str | None = None) -> ScrapedArticle | None:
+        """Parse a single feed entry into a ScrapedArticle.
+
+        feed_category: RSS entry'nin kendi tag'i yoksa bu deger kullanilir.
+        """
         title = getattr(entry, "title", None)
         link = getattr(entry, "link", None)
 
         if not title or not link:
             return None
+
+        # RSS entry tag'i oncelikli, yoksa feed'in kendi kategorisi
+        category = self.parse_category(entry) or feed_category
 
         return ScrapedArticle(
             title=title.strip(),
@@ -91,7 +110,7 @@ class RSSNewsScraper(BaseNewsScraper):
             author=self.parse_author(entry),
             published_at=self.parse_published_at(entry),
             image_url=self.parse_image(entry),
-            category=self.parse_category(entry),
+            category=category,
             tags=self._extract_tags(entry),
         )
 
@@ -100,7 +119,7 @@ class RSSNewsScraper(BaseNewsScraper):
             return [t.get("term", "") for t in entry.tags if t.get("term")]
         return None
 
-    async def fetch_feed(self, feed_url: str) -> list[ScrapedArticle]:
+    async def fetch_feed(self, feed_url: str, feed_category: str | None = None) -> list[ScrapedArticle]:
         """Fetch and parse a single RSS feed."""
         articles = []
         try:
@@ -115,7 +134,7 @@ class RSSNewsScraper(BaseNewsScraper):
             feed = feedparser.parse(response.text)
 
             for entry in feed.entries:
-                article = self.parse_entry(entry)
+                article = self.parse_entry(entry, feed_category)
                 if article:
                     articles.append(article)
 
@@ -131,9 +150,15 @@ class RSSNewsScraper(BaseNewsScraper):
         all_articles = []
         seen_urls = set()
 
-        for feed_url in self.get_feed_urls():
-            logger.info(f"Fetching feed: {feed_url}")
-            articles = await self.fetch_feed(feed_url)
+        for feed in self.get_feeds():
+            feed_url = feed["url"]
+            feed_category = feed.get("category")
+
+            if not feed_url:
+                continue
+
+            logger.info(f"Fetching feed: {feed_url} (category={feed_category})")
+            articles = await self.fetch_feed(feed_url, feed_category)
 
             for article in articles:
                 if article.url not in seen_urls:

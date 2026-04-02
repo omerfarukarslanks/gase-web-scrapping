@@ -35,3 +35,9 @@ scrape:
 
 scrape-source:
 	docker compose exec -e PYTHONPATH=/app api python -m scripts.manual_scrape $(slug)
+
+update-sources:
+	docker compose exec -e PYTHONPATH=/app api python -m scripts.update_sources
+
+fix-sources:
+	docker compose exec -e PYTHONPATH=/app api python -m scripts.fix_sources
