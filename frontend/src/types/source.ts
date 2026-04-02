@@ -20,7 +20,7 @@ export interface Source {
 
 export interface ScrapeRun {
   id: string;
-  source_id: string;
+  source_id: string | null;
   status: string;
   articles_found: number;
   articles_new: number;

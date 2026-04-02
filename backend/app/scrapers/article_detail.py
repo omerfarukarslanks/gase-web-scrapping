@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import logging
 from urllib.parse import urlparse
 
@@ -12,6 +13,10 @@ from app.scrapers.utils.rate_limiter import rate_limiter
 from app.scrapers.utils.robots_txt import is_allowed as robots_allowed
 
 logger = logging.getLogger(__name__)
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class ArticleDetailEnricher:
@@ -61,6 +66,23 @@ class ArticleDetailEnricher:
 
         return enriched_articles, enriched_count, metadata_only_count
 
+    def needs_enrichment(
+        self,
+        article: dict,
+        *,
+        include_content_text: bool = False,
+    ) -> bool:
+        return self._needs_enrichment(article, include_content_text=include_content_text)
+
+    def should_skip_url(self, url: str | None) -> bool:
+        return self._should_skip_url(url)
+
+    async def is_allowed(self, target_url: str) -> bool:
+        return await self._is_allowed(target_url)
+
+    async def enrich_article(self, article: dict) -> tuple[dict, bool]:
+        return await self._enrich_article(article)
+
     async def _enrich_article(self, article: dict) -> tuple[dict, bool]:
         domain = urlparse(article["url"]).netloc
         await rate_limiter.acquire(domain, self.source.rate_limit_rpm)
@@ -81,7 +103,8 @@ class ArticleDetailEnricher:
             include_tables=False,
             no_fallback=False,
         )
-        content_snippet = (trafilatura_text or "").strip()[:1000] or None
+        content_text = (trafilatura_text or "").strip() or None
+        content_snippet = (content_text or "")[:1000] or None
         summary = article.get("summary") or extracted.get("summary")
         if not summary and content_snippet:
             summary = content_snippet[:280]
@@ -92,6 +115,7 @@ class ArticleDetailEnricher:
             "title": extracted.get("title"),
             "summary": summary,
             "content_snippet": article.get("content_snippet") or content_snippet,
+            "content_text": article.get("content_text") or content_text,
             "author": extracted.get("author"),
             "published_at": extracted.get("published_at"),
             "image_url": extracted.get("image_url"),
@@ -108,10 +132,16 @@ class ArticleDetailEnricher:
 
         raw_metadata = dict(enriched.get("raw_metadata") or {})
         raw_metadata["detail_enriched"] = changed
+        raw_metadata["detail_enrichment"] = {
+            "status": "success",
+            "changed": changed,
+            "fetched_at": utcnow().isoformat(),
+            "content_length": len(content_text or ""),
+        }
         enriched["raw_metadata"] = raw_metadata
         return enriched, changed
 
-    def _needs_enrichment(self, article: dict) -> bool:
+    def _needs_enrichment(self, article: dict, *, include_content_text: bool = False) -> bool:
         if self.source.has_paywall:
             return False
         detail_policy = (self.source.config or {}).get("detail_policy", "open_page_only")
@@ -119,10 +149,13 @@ class ArticleDetailEnricher:
             return False
         if self._should_skip_url(article.get("url")):
             return False
-        return any(
+        missing_fields = any(
             article.get(field) in (None, "", [], {})
             for field in ("summary", "image_url", "author", "published_at", "category")
         )
+        if include_content_text and article.get("content_text") in (None, "", [], {}):
+            return True
+        return missing_fields
 
     def _should_skip_url(self, url: str | None) -> bool:
         if not url:

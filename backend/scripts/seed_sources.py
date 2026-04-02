@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from app.db.session import async_session_factory
 from app.models import Article, ScrapeRun, Source  # noqa: F401 - registers all models
+from app.source_policy import REMOVED_SOURCE_SLUGS
 
 SOURCES = [
     # =========================================================================
@@ -362,6 +363,7 @@ SOURCES = [
 
 SOURCE_DISCOVERY_OVERRIDES = {
     "reuters": {
+        "is_active": False,
         "scraper_type": "rss",
         "config": {
             "section_urls": [
@@ -376,6 +378,9 @@ SOURCE_DISCOVERY_OVERRIDES = {
             "require_date_path": True,
             "max_links_per_section": 12,
             "max_detail_enrichment_articles": 12,
+            "analysis_rules": {
+                "reject_url_substrings": ["/graphics/", "/pictures/", "/fact-check/"],
+            },
         },
     },
     "apnews": {
@@ -390,7 +395,8 @@ SOURCE_DISCOVERY_OVERRIDES = {
             "discovery_priority": ["news_sitemap", "rss", "section_html"],
             "detail_policy": "open_page_only",
             "respect_robots": True,
-            "exclude_url_substrings": ["/hub/", "/test-page/"],
+            "exclude_url_substrings": ["/hub/", "/test-page/", "/live/"],
+            "skip_detail_url_substrings": ["/live/"],
             "max_links_per_section": 12,
             "max_detail_enrichment_articles": 12,
         },
@@ -416,6 +422,10 @@ SOURCE_DISCOVERY_OVERRIDES = {
             ],
             "max_links_per_section": 12,
             "max_detail_enrichment_articles": 10,
+            "analysis_rules": {
+                "reject_url_substrings": ["/replay/", "/sponsored", "/news-alerts", "/settings"],
+                "reject_title_terms": ["latest newscast", "closed-captioned newscast", "sponsored contents"],
+            },
         },
     },
     "bbc": {
@@ -487,6 +497,9 @@ SOURCE_DISCOVERY_OVERRIDES = {
             "skip_detail_url_substrings": ["/video/", "/videos/"],
             "max_links_per_section": 12,
             "max_detail_enrichment_articles": 10,
+            "analysis_rules": {
+                "reject_url_substrings": ["/video/", "/videos/", "/gma3/", "/538/"],
+            },
         },
     },
     "cbsnews": {
@@ -524,6 +537,7 @@ SOURCE_DISCOVERY_OVERRIDES = {
         },
     },
     "bloomberg": {
+        "is_active": False,
         "scraper_type": "news_sitemap",
         "config": {
             "sitemap_urls": ["https://www.bloomberg.com/sitemap.xml"],
@@ -535,9 +549,39 @@ SOURCE_DISCOVERY_OVERRIDES = {
             "discovery_priority": ["news_sitemap", "rss"],
             "detail_policy": "metadata_only",
             "respect_robots": True,
+            "analysis_rules": {
+                "reject_url_substrings": ["/subscriptions", "/workwise", "/calculator", "/gift-guide"],
+                "reject_title_terms": ["subscriptions", "workwise", "gift guide", "calculator", "wealthscore"],
+                "evergreen_title_terms": ["2020 china", "2020 chinese new year"],
+            },
+        },
+    },
+    "cbssports": {
+        "config": {
+            "analysis_rules": {
+                "force_story_subtype_by_title_terms": {
+                    "odds": ["odds", "prediction", "predictions", "picks", "spread", "line"],
+                    "admin": ["athletic director", "conference championship", "federation", "president", "commissioner"],
+                    "schedule": ["schedule", "fixtures", "dates", "venues"],
+                },
+                "reject_url_substrings": ["/video/", "/podcast/"],
+            },
+        },
+    },
+    "yahoosports": {
+        "config": {
+            "analysis_rules": {
+                "force_story_subtype_by_title_terms": {
+                    "schedule": ["schedule", "fixtures", "dates", "venues", "home-away"],
+                    "odds": ["odds", "prediction", "predictions", "picks"],
+                    "admin": ["president", "federation", "commissioner", "resigns"],
+                },
+                "reject_url_substrings": ["/video/", "/newsletters"],
+            },
         },
     },
     "ft": {
+        "is_active": False,
         "scraper_type": "news_sitemap",
         "config": {
             "sitemap_urls": ["https://www.ft.com/sitemaps/news.xml", "https://www.ft.com/sitemaps.xml"],
@@ -548,9 +592,23 @@ SOURCE_DISCOVERY_OVERRIDES = {
             "discovery_priority": ["news_sitemap", "rss"],
             "detail_policy": "metadata_only",
             "respect_robots": True,
+            "analysis_rules": {
+                "reject_url_substrings": ["/stream/", "/myft/", "/podcasts", "/video/"],
+            },
         },
     },
+    "skysports": {
+        "config": {
+            "analysis_rules": {
+                "reject_url_substrings": ["/watch/", "/video/", "/videos/", "/transfer-centre/", "/live-blog/"],
+            },
+        },
+    },
+    "espncricinfo": {
+        "is_active": False,
+    },
     "wsj": {
+        "is_active": False,
         "scraper_type": "news_sitemap",
         "config": {
             "sitemap_urls": ["https://www.wsj.com/xml/sitemap.xml"],
@@ -564,6 +622,7 @@ SOURCE_DISCOVERY_OVERRIDES = {
         },
     },
     "economist": {
+        "is_active": False,
         "scraper_type": "news_sitemap",
         "config": {
             "sitemap_urls": ["https://www.economist.com/sitemaps.xml"],
@@ -579,13 +638,23 @@ SOURCE_DISCOVERY_OVERRIDES = {
 }
 
 
+def deep_merge_dicts(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def build_source_payload(source_data: dict) -> dict:
     override = SOURCE_DISCOVERY_OVERRIDES.get(source_data["slug"], {})
     payload = dict(source_data)
 
     base_config = dict(payload.get("config") or {})
     override_config = dict(override.get("config") or {})
-    merged_config = {**base_config, **override_config}
+    merged_config = deep_merge_dicts(base_config, override_config)
 
     for key, value in override.items():
         if key == "config":
@@ -603,6 +672,9 @@ def build_source_payload(source_data: dict) -> dict:
 async def seed():
     async with async_session_factory() as session:
         for source_data in SOURCES:
+            if source_data["slug"] in REMOVED_SOURCE_SLUGS:
+                print(f"  Skipping {source_data['slug']} (removed source)")
+                continue
             existing = await session.execute(
                 select(Source).where(Source.slug == source_data["slug"])
             )
@@ -614,7 +686,7 @@ async def seed():
             source = Source(
                 scrape_interval_minutes=60,
                 rate_limit_rpm=10,
-                is_active=True,
+                is_active=payload.get("is_active", True),
                 **payload,
             )
             session.add(source)

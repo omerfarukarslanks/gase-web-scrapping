@@ -1,0 +1,826 @@
+[
+  {
+    "case_id": "valid_shared_market_topic",
+    "description": "Shared finance cluster should survive as a shared topic with market framing.",
+    "hours": 3,
+    "source_category": "finance",
+    "category": "business",
+    "limit_topics": 5,
+    "sources": [
+      {
+        "slug": "reuters",
+        "name": "Reuters",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/graphics/", "/pictures/", "/fact-check/"]
+          }
+        }
+      },
+      {
+        "slug": "bloomberg",
+        "name": "Bloomberg",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/subscriptions", "/workwise", "/calculator"],
+            "reject_title_terms": ["subscriptions", "workwise", "gift guide"],
+            "evergreen_title_terms": ["2020 china", "2020 chinese new year"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "reuters",
+        "title": "Oil prices jump after Texas refinery outage",
+        "url": "https://reuters.example.com/oil-prices-jump",
+        "source_category": "finance",
+        "summary": "Oil prices moved higher after a refinery outage in Texas tightened market expectations.",
+        "published_minutes_ago": 25,
+        "created_minutes_ago": 25,
+        "category": "business",
+        "image_url": "https://cdn.example.com/reuters-golden-oil.jpg"
+      },
+      {
+        "source_slug": "bloomberg",
+        "title": "Texas refinery outage sends crude higher",
+        "url": "https://bloomberg.example.com/refinery-outage",
+        "source_category": "finance",
+        "summary": "Crude rose as a Texas refinery outage raised near-term supply concerns across markets.",
+        "published_minutes_ago": 18,
+        "created_minutes_ago": 18,
+        "category": "business",
+        "image_url": "https://cdn.example.com/bloomberg-golden-oil.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Petrol fiyatlari Teksas rafineri arizasi sonrasi yukseliste",
+        "summary_tr": "Teksas'taki rafineri arizasi petrol arzina dair kaygilari artirdi.",
+        "key_points_tr": ["Rafineri arizasi arz beklentilerini sikilastirdi."],
+        "why_it_matters_tr": "Enerji maliyetleri ve piyasa oynakligi kisa vadede etkilenebilir."
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["shared"],
+      "must_contain_headlines": ["Petrol fiyatlari"],
+      "rejected_articles": 0
+    }
+  },
+  {
+    "case_id": "valid_unique_singleton",
+    "description": "A clean singleton article should still become a unique topic.",
+    "hours": 3,
+    "sources": [
+      {"slug": "ap", "name": "AP News", "category": "general"}
+    ],
+    "articles": [
+      {
+        "source_slug": "ap",
+        "title": "Mayor announces flood cleanup fund after weekend damage",
+        "url": "https://ap.example.com/2026/04/02/flood-cleanup-fund",
+        "source_category": "general",
+        "summary": "A mayor announced a cleanup fund after severe weekend flood damage.",
+        "published_minutes_ago": 14,
+        "created_minutes_ago": 14,
+        "category": "general",
+        "image_url": "https://cdn.example.com/ap-golden-flood.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "must_contain_headlines": ["Mayor announces flood cleanup fund"],
+      "rejected_articles": 0,
+      "rejected_unique_candidates": 0
+    }
+  },
+  {
+    "case_id": "bloomberg_subscriptions_rejected_by_source_rules",
+    "description": "Bloomberg subscription utility page should be rejected by source rules.",
+    "hours": 3,
+    "source_category": "finance",
+    "category": "business",
+    "sources": [
+      {
+        "slug": "bloomberg",
+        "name": "Bloomberg",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/subscriptions", "/workwise", "/calculator"],
+            "reject_title_terms": ["subscriptions", "workwise", "gift guide"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "bloomberg",
+        "title": "subscriptions",
+        "url": "https://www.bloomberg.com/subscriptions",
+        "source_category": "finance",
+        "summary": "subscriptions",
+        "published_minutes_ago": 10,
+        "created_minutes_ago": 10,
+        "category": "business"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"utility_or_hub_page": 1}
+    }
+  },
+  {
+    "case_id": "bloomberg_evergreen_rejected_by_source_rules",
+    "description": "Bloomberg evergreen headline should be rejected as stale.",
+    "hours": 3,
+    "source_category": "finance",
+    "category": "business",
+    "sources": [
+      {
+        "slug": "bloomberg",
+        "name": "Bloomberg",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "evergreen_title_terms": ["2020 china consumer", "2020 chinese new year"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "bloomberg",
+        "title": "2020 China consumer outlook special report",
+        "url": "https://www.bloomberg.com/articles/2020-china-consumer-outlook-special-report-123456",
+        "source_category": "finance",
+        "summary": "An old evergreen feature surfaced in a recent scrape.",
+        "published_minutes_ago": 11,
+        "created_minutes_ago": 11,
+        "category": "business"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"stale_or_evergreen": 1}
+    }
+  },
+  {
+    "case_id": "invalid_analysis_rules_are_ignored",
+    "description": "Malformed source rules should not break a valid unique topic.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "ap",
+        "name": "AP News",
+        "category": "general",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": "not-a-list",
+            "reject_title_regexes": ["["],
+            "force_story_subtype_by_title_terms": {"not-real": ["odds"]}
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "ap",
+        "title": "City opens overnight cooling centers ahead of heatwave",
+        "url": "https://ap.example.com/2026/04/02/heatwave-centers",
+        "source_category": "general",
+        "summary": "Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        "published_minutes_ago": 12,
+        "created_minutes_ago": 12,
+        "category": "general",
+        "image_url": "https://cdn.example.com/ap-golden-heatwave.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "must_contain_headlines": ["City opens overnight cooling centers"],
+      "rejected_articles": 0
+    }
+  },
+  {
+    "case_id": "html_entity_is_sanitized",
+    "description": "HTML entities should be decoded without leaking numeric artifacts into output.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "skysports",
+        "name": "Sky Sports",
+        "category": "sports",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/watch/", "/video/", "/videos/", "/transfer-centre/", "/live-blog/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "skysports",
+        "title": "Wilder gunning for Usyk: 'It can and will happen'",
+        "url": "https://www.skysports.com/boxing/news/2026/04/02/wilder-usyk-it-can-and-will-happen",
+        "source_category": "sports",
+        "summary": "Deontay Wilder believes he&#8217;s one victory away from challenging unified heavyweight champion Oleksandr Usyk.",
+        "published_minutes_ago": 9,
+        "created_minutes_ago": 9,
+        "category": "sports",
+        "image_url": "https://example.com/wilder.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "story_subtype_effects": [
+        {
+          "summary_contains": "he's one victory away",
+          "summary_not_contains": ["8217"],
+          "key_data_not_contains": ["8217"],
+          "video_prompt_not_contains": ["8217"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "yahoo_schedule_forced_subtype",
+    "description": "Yahoo Sports schedule coverage should use schedule subtype instead of scoreboard framing.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {
+        "slug": "yahoosports",
+        "name": "Yahoo Sports",
+        "category": "sports",
+        "config": {
+          "analysis_rules": {
+            "force_story_subtype_by_title_terms": {
+              "schedule": ["schedule", "fixtures", "dates", "venues", "home-away"]
+            }
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "yahoosports",
+        "title": "MI IPL 2026 full schedule: Check dates, venues and home-away fixtures of Mumbai Indians",
+        "url": "https://sports.yahoo.com/articles/mi-ipl-2026-full-schedule-161600406.html",
+        "source_category": "sports",
+        "summary": "Mumbai Indians, aiming for a record sixth IPL title, kick off their 2026 campaign against Kolkata Knight Riders on March 29 at Wankhede.",
+        "published_minutes_ago": 8,
+        "created_minutes_ago": 8,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/yahoo-golden-schedule.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "story_subtype_effects": [
+        {
+          "story_angle_contains": "schedule-driven sports update",
+          "video_prompt_not_contains": ["scoreboard"],
+          "scene_sequence_not_contains": ["scoreboard"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "cbssports_odds_forced_subtype",
+    "description": "CBS Sports odds coverage should use betting-focused sports update framing.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {
+        "slug": "cbssports",
+        "name": "CBS Sports",
+        "category": "sports",
+        "config": {
+          "analysis_rules": {
+            "force_story_subtype_by_title_terms": {
+              "odds": ["odds", "prediction", "predictions", "picks", "spread", "line"]
+            }
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "cbssports",
+        "title": "UConn vs. Illinois odds, March Madness predictions: 2026 Final Four picks from proven model",
+        "url": "https://www.cbssports.com/general/news/uconn-illinois-odds-line-spread-time-date-march-madness-predictions-2026-final-four-picks-projections/",
+        "source_category": "sports",
+        "summary": "SportsLine's model reveals its betting edge for UConn versus Illinois in the Final Four.",
+        "published_minutes_ago": 7,
+        "created_minutes_ago": 7,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/cbs-golden-odds.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "story_subtype_effects": [
+        {
+          "story_angle_contains": "betting-and-expectations sports update",
+          "scene_sequence_not_contains": ["scoreboard lockup"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "cbssports_admin_forced_subtype",
+    "description": "Off-field CBS Sports stories should stay in admin/update framing.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "cbssports",
+        "name": "CBS Sports",
+        "category": "sports",
+        "config": {
+          "analysis_rules": {
+            "force_story_subtype_by_title_terms": {
+              "admin": ["athletic director", "conference championship", "president", "commissioner"]
+            }
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "cbssports",
+        "title": "Alabama AD Greg Byrne suggests ending conference championship games",
+        "url": "https://www.cbssports.com/college-football/news/alabama-ad-greg-byrne-ending-conference-championship-games/",
+        "source_category": "sports",
+        "summary": "Greg Byrne said conference title games may no longer fit the playoff era.",
+        "published_minutes_ago": 6,
+        "created_minutes_ago": 6,
+        "category": "sports"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "story_subtype_effects": [
+        {
+          "story_angle_contains": "off-field sports development",
+          "video_prompt_not_contains": ["scoreboard"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "business_non_market_stays_editorial",
+    "description": "Non-market business stories should not be forced into terminal-style prompts.",
+    "hours": 3,
+    "category": "business",
+    "source_category": "finance",
+    "sources": [
+      {
+        "slug": "ft",
+        "name": "Financial Times",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/stream/", "/myft/", "/podcasts", "/video/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "ft",
+        "title": "MPS turmoil could turn it from predator to prey",
+        "url": "https://www.ft.com/content/3b19fba9-7107-4f93-86d5-3505ea2189d8",
+        "source_category": "finance",
+        "summary": "A strategic rethink could leave the bank vulnerable to a takeover instead of expansion.",
+        "published_minutes_ago": 13,
+        "created_minutes_ago": 13,
+        "category": "business",
+        "image_url": "https://cdn.example.com/ft-golden-mps.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "story_subtype_effects": [
+        {
+          "format_hint_equals": "Editorial business explainer with restrained motion graphics",
+          "story_angle_not_contains": ["market narrative"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "france24_replay_rejected_by_source_rules",
+    "description": "France 24 replay pages should be rejected before topic generation.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "france24",
+        "name": "France 24",
+        "category": "general",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/replay/", "/sponsored", "/news-alerts", "/settings"],
+            "reject_title_terms": ["latest newscast", "closed-captioned newscast", "sponsored contents"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "france24",
+        "title": "Latest Newscast",
+        "url": "https://www.france24.com/en/replay/latest-news",
+        "source_category": "general",
+        "summary": "Watch the latest top stories with France 24.",
+        "published_minutes_ago": 9,
+        "created_minutes_ago": 9,
+        "category": "world"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"utility_or_hub_page": 1}
+    }
+  },
+  {
+    "case_id": "abcnews_video_rejected_by_source_rules",
+    "description": "ABC News video pages should be rejected before topic generation.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "abcnews",
+        "name": "ABC News",
+        "category": "general",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/video/", "/videos/", "/gma3/", "/538/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "abcnews",
+        "title": "GMA3: Markets react to new tariff warning",
+        "url": "https://abcnews.go.com/gma3/markets-react-new-tariff-warning-12345678",
+        "source_category": "general",
+        "summary": "A video package covers the latest market reaction.",
+        "published_minutes_ago": 9,
+        "created_minutes_ago": 9,
+        "category": "business"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"utility_or_hub_page": 1}
+    }
+  },
+  {
+    "case_id": "abcnews_clean_article_preserved_with_rules",
+    "description": "ABC News article pages should survive even when source-specific reject rules are enabled.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "abcnews",
+        "name": "ABC News",
+        "category": "general",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/video/", "/videos/", "/gma3/", "/538/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "abcnews",
+        "title": "Mayor outlines downtown flood recovery plan after weekend storms",
+        "url": "https://abcnews.go.com/2026/04/02/mayor-outlines-downtown-flood-recovery-plan-after-weekend-storms",
+        "source_category": "general",
+        "summary": "City leaders outlined a flood recovery plan after weekend storms damaged roads and homes downtown.",
+        "published_minutes_ago": 15,
+        "created_minutes_ago": 15,
+        "category": "general",
+        "image_url": "https://cdn.example.com/abc-flood-recovery.jpg"
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "aggregation_types": ["unique"],
+      "quality_statuses": ["publishable"],
+      "quality_scores": [{"min": 0.75}],
+      "must_contain_headlines": ["Mayor outlines downtown flood recovery plan"],
+      "rejected_articles": 0
+    }
+  },
+  {
+    "case_id": "skysports_live_blog_rejected_by_source_rules",
+    "description": "Sky Sports live blog pages should be rejected by source-specific rules.",
+    "hours": 3,
+    "sources": [
+      {
+        "slug": "skysports",
+        "name": "Sky Sports",
+        "category": "sports",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/watch/", "/video/", "/videos/", "/transfer-centre/", "/live-blog/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "skysports",
+        "title": "Transfer Centre LIVE!",
+        "url": "https://www.skysports.com/live-blog/transfer-centre/12345/latest-updates",
+        "source_category": "sports",
+        "summary": "The latest transfer updates are collected in one live blog.",
+        "published_minutes_ago": 12,
+        "created_minutes_ago": 12,
+        "category": "sports"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"utility_or_hub_page": 1}
+    }
+  },
+  {
+    "case_id": "ft_stream_rejected_by_source_rules",
+    "description": "FT stream and utility pages should be rejected before topic generation.",
+    "hours": 3,
+    "source_category": "finance",
+    "category": "business",
+    "sources": [
+      {
+        "slug": "ft",
+        "name": "Financial Times",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/stream/", "/myft/", "/podcasts", "/video/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "ft",
+        "title": "Markets live",
+        "url": "https://www.ft.com/stream/12345678-1234-1234-1234-123456789012",
+        "source_category": "finance",
+        "summary": "A live stream page tracks rolling market updates.",
+        "published_minutes_ago": 11,
+        "created_minutes_ago": 11,
+        "category": "business"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"utility_or_hub_page": 1}
+    }
+  },
+  {
+    "case_id": "reuters_graphics_rejected_by_source_rules",
+    "description": "Reuters graphics pages should not become normal news topics.",
+    "hours": 3,
+    "source_category": "finance",
+    "category": "business",
+    "sources": [
+      {
+        "slug": "reuters",
+        "name": "Reuters",
+        "category": "finance",
+        "config": {
+          "analysis_rules": {
+            "reject_url_substrings": ["/graphics/", "/pictures/", "/fact-check/"]
+          }
+        }
+      }
+    ],
+    "articles": [
+      {
+        "source_slug": "reuters",
+        "title": "Graphics: How oil supply chains rerouted after the storm",
+        "url": "https://www.reuters.com/graphics/oil-supply-rerouted-after-storm/abcdefghijk/",
+        "source_category": "finance",
+        "summary": "A Reuters graphics package explains how oil supply chains changed after the storm.",
+        "published_minutes_ago": 16,
+        "created_minutes_ago": 16,
+        "category": "business"
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "rejected_articles": 1,
+      "rejection_breakdown": {"utility_or_hub_page": 1}
+    }
+  },
+  {
+    "case_id": "publishable_scores_above_review_with_include_review",
+    "description": "Publishable topics should appear before review topics and have higher scores when include_review is enabled.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "ap", "name": "AP News", "category": "general"},
+      {"slug": "bbc", "name": "BBC News", "category": "general"},
+      {"slug": "guardian", "name": "The Guardian", "category": "general"}
+    ],
+    "articles": [
+      {
+        "source_slug": "ap",
+        "title": "Flood recovery fund opens for riverfront neighborhoods",
+        "url": "https://ap.example.com/2026/04/02/flood-recovery-fund",
+        "source_category": "general",
+        "summary": "Officials opened a flood recovery fund for riverfront neighborhoods after a weekend storm.",
+        "published_minutes_ago": 14,
+        "created_minutes_ago": 14,
+        "category": "general",
+        "image_url": "https://cdn.example.com/ap-flood-recovery-fund.jpg"
+      },
+      {
+        "source_slug": "bbc",
+        "title": "Riverfront neighborhoods get flood recovery fund",
+        "url": "https://bbc.example.com/news/riverfront-flood-recovery-fund-12345678",
+        "source_category": "general",
+        "summary": "A second report says riverfront neighborhoods will receive recovery funding after flood damage.",
+        "published_minutes_ago": 11,
+        "created_minutes_ago": 11,
+        "category": "general",
+        "image_url": "https://cdn.example.com/bbc-flood-recovery-fund.jpg"
+      },
+      {
+        "source_slug": "guardian",
+        "title": "City opens cooling centers before overnight heatwave",
+        "url": "https://guardian.example.com/cooling-centers-before-overnight-heatwave",
+        "source_category": "general",
+        "summary": "Officials opened cooling centers before an overnight heatwave.",
+        "published_minutes_ago": 9,
+        "created_minutes_ago": 9,
+        "category": "general"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Flood recovery fund opens for riverfront neighborhoods",
+        "summary_tr": "Riverfront neighborhoods will receive recovery funding after weekend flood damage.",
+        "key_points_tr": ["Officials confirmed immediate recovery funding."],
+        "why_it_matters_tr": "The new fund shapes the pace of local recovery."
+      }
+    ],
+    "expected": {
+      "topic_count": 2,
+      "headline_order": ["Flood recovery fund opens", "City opens cooling centers"],
+      "quality_statuses": ["publishable", "review"],
+      "quality_score_descending": true
+    }
+  },
+  {
+    "case_id": "shared_publishable_scores_above_unique_publishable",
+    "description": "Shared publishable topics should outrank unique publishable topics when both are visible.",
+    "hours": 3,
+    "sources": [
+      {"slug": "reuters", "name": "Reuters", "category": "finance"},
+      {"slug": "bloomberg", "name": "Bloomberg", "category": "finance"},
+      {"slug": "ap", "name": "AP News", "category": "general"}
+    ],
+    "articles": [
+      {
+        "source_slug": "reuters",
+        "title": "Oil prices jump after Texas refinery outage",
+        "url": "https://reuters.example.com/oil-prices-jump",
+        "source_category": "finance",
+        "summary": "Oil prices moved higher after a refinery outage in Texas tightened market expectations.",
+        "published_minutes_ago": 25,
+        "created_minutes_ago": 25,
+        "category": "business",
+        "image_url": "https://cdn.example.com/reuters-shared-score.jpg"
+      },
+      {
+        "source_slug": "bloomberg",
+        "title": "Texas refinery outage sends crude higher",
+        "url": "https://bloomberg.example.com/refinery-outage",
+        "source_category": "finance",
+        "summary": "Crude rose as a Texas refinery outage raised near-term supply concerns across markets.",
+        "published_minutes_ago": 18,
+        "created_minutes_ago": 18,
+        "category": "business",
+        "image_url": "https://cdn.example.com/bloomberg-shared-score.jpg"
+      },
+      {
+        "source_slug": "ap",
+        "title": "Mayor opens new flood recovery center downtown",
+        "url": "https://ap.example.com/2026/04/02/flood-recovery-center",
+        "source_category": "general",
+        "summary": "The city opened a new flood recovery center downtown after widespread storm damage.",
+        "published_minutes_ago": 10,
+        "created_minutes_ago": 10,
+        "category": "general",
+        "image_url": "https://cdn.example.com/ap-unique-score.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Petrol fiyatlari Teksas rafineri arizasi sonrasi yukseliste",
+        "summary_tr": "Teksas'taki rafineri arizasi petrol arzina dair kaygilari artirdi.",
+        "key_points_tr": ["Rafineri arizasi arz beklentilerini sikilastirdi."],
+        "why_it_matters_tr": "Enerji maliyetleri ve piyasa oynakligi kisa vadede etkilenebilir."
+      }
+    ],
+    "expected": {
+      "topic_count": 2,
+      "aggregation_types": ["shared", "unique"],
+      "quality_statuses": ["publishable", "publishable"],
+      "headline_order": ["Petrol fiyatlari", "Mayor opens new flood recovery center"],
+      "quality_score_descending": true
+    }
+  },
+  {
+    "case_id": "limit_topics_mixed_pool",
+    "description": "Final limit should keep shared topics first and drop extra unique candidates.",
+    "hours": 3,
+    "limit_topics": 2,
+    "sources": [
+      {"slug": "reuters", "name": "Reuters", "category": "finance"},
+      {"slug": "bloomberg", "name": "Bloomberg", "category": "finance"},
+      {"slug": "ap", "name": "AP News", "category": "general"},
+      {"slug": "bbc", "name": "BBC News", "category": "general"}
+    ],
+    "articles": [
+      {
+        "source_slug": "reuters",
+        "title": "Oil prices jump after Texas refinery outage",
+        "url": "https://reuters.example.com/oil-prices-jump",
+        "source_category": "finance",
+        "summary": "Oil prices moved higher after a refinery outage in Texas tightened market expectations.",
+        "published_minutes_ago": 25,
+        "created_minutes_ago": 25,
+        "category": "business",
+        "image_url": "https://cdn.example.com/reuters-limit-oil.jpg"
+      },
+      {
+        "source_slug": "bloomberg",
+        "title": "Texas refinery outage sends crude higher",
+        "url": "https://bloomberg.example.com/refinery-outage",
+        "source_category": "finance",
+        "summary": "Crude rose as a Texas refinery outage raised near-term supply concerns across markets.",
+        "published_minutes_ago": 18,
+        "created_minutes_ago": 18,
+        "category": "business",
+        "image_url": "https://cdn.example.com/bloomberg-limit-oil.jpg"
+      },
+      {
+        "source_slug": "ap",
+        "title": "City opens overnight cooling centers ahead of heatwave",
+        "url": "https://ap.example.com/2026/04/02/heatwave-centers",
+        "source_category": "general",
+        "summary": "Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        "published_minutes_ago": 10,
+        "created_minutes_ago": 10,
+        "category": "general",
+        "image_url": "https://cdn.example.com/ap-limit-heatwave.jpg"
+      },
+      {
+        "source_slug": "bbc",
+        "title": "Launch coverage within three hours",
+        "url": "https://bbc.example.com/launch-coverage",
+        "source_category": "general",
+        "summary": "A launch story published two hours ago.",
+        "published_minutes_ago": 6,
+        "created_minutes_ago": 6,
+        "category": "science"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Petrol fiyatlari Teksas rafineri arizasi sonrasi yukseliste",
+        "summary_tr": "Teksas'taki rafineri arizasi petrol arzina dair kaygilari artirdi.",
+        "key_points_tr": ["Rafineri arizasi arz beklentilerini sikilastirdi."],
+        "why_it_matters_tr": "Enerji maliyetleri ve piyasa oynakligi kisa vadede etkilenebilir."
+      }
+    ],
+    "expected": {
+      "topic_count": 2,
+      "aggregation_types": ["shared", "unique"],
+      "must_contain_headlines": ["Petrol fiyatlari"],
+      "dropped_unique_articles": 1
+    }
+  }
+]

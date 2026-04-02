@@ -10,7 +10,7 @@ from app.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
-from app.models import Article, ScrapeRun, Source  # noqa: F401
+from app.models import Article, ScrapeRun, Source, TopicFeedback  # noqa: F401
 
 
 @pytest_asyncio.fixture

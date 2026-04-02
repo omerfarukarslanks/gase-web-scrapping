@@ -2,10 +2,12 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.article import Article
 from app.models.source import Source
+from app.models.topic_feedback import TopicFeedback
 from app.schemas.analysis import VideoPromptParts
 from app.services.article_service import hash_url
 from app.services.remotion_storyboard_service import RemotionStoryboardService
@@ -133,6 +135,64 @@ def make_prepared_article(
         title_tokens=tokenize(title),
         text_tokens=tokenize(summary, max_tokens=80),
     )
+
+
+async def create_topic_feedback_record(
+    db_session: AsyncSession,
+    *,
+    topic_id: str,
+    feedback_label: str,
+    headline_tr: str = "Sample headline",
+    summary_tr: str = "Sample summary with enough words for tuning.",
+    category: str = "general",
+    aggregation_type: str = "shared",
+    quality_status: str = "publishable",
+    quality_score: float = 0.75,
+    source_count: int = 2,
+    article_count: int = 2,
+    source_slugs: list[str] | None = None,
+    review_reasons: list[str] | None = None,
+    score_features: dict[str, bool] | None = None,
+    note: str | None = None,
+) -> TopicFeedback:
+    record = TopicFeedback(
+        topic_id=topic_id,
+        feedback_label=feedback_label,
+        note=note,
+        headline_tr=headline_tr,
+        summary_tr=summary_tr,
+        category=category,
+        aggregation_type=aggregation_type,
+        quality_status=quality_status,
+        quality_score=quality_score,
+        source_count=source_count,
+        article_count=article_count,
+        source_slugs=source_slugs or ["reuters"],
+        representative_article_ids=[str(uuid4())],
+        review_reasons=review_reasons or [],
+        score_features=score_features
+        or {
+            "shared_topic": aggregation_type == "shared",
+            "unique_topic": aggregation_type == "unique",
+            "source_count_ge_2": source_count >= 2,
+            "source_count_ge_3": source_count >= 3,
+            "has_visual_asset": True,
+            "missing_visual_asset": False,
+            "non_thin_summary": True,
+            "thin_summary": False,
+            "non_truncated_headline": True,
+            "truncated_headline": False,
+            "has_published_at": True,
+            "missing_published_at": False,
+            "article_count_ge_2": article_count >= 2,
+            "degraded_generation": False,
+            "review_status": quality_status == "review",
+        },
+    )
+    db_session.add(record)
+    await db_session.flush()
+    await db_session.refresh(record)
+    return record
 
 
 @pytest.mark.asyncio
@@ -1051,7 +1111,7 @@ async def test_topic_briefs_endpoint_degrades_when_ollama_is_unavailable(
         raise_ollama_error,
     )
 
-    response = await client.get("/api/v1/analysis/topic-briefs")
+    response = await client.get("/api/v1/analysis/topic-briefs", params={"include_review": True})
 
     assert response.status_code == 200
     payload = response.json()
@@ -1059,6 +1119,7 @@ async def test_topic_briefs_endpoint_degrades_when_ollama_is_unavailable(
     assert len(payload["groups"]) == 1
     topic = payload["groups"][0]["topics"][0]
     assert topic["aggregation_type"] == "shared"
+    assert topic["quality_status"] == "review"
     assert topic["source_count"] == 2
     assert "Use Remotion best practices." in topic["video_prompt_en"]
     assert "Create a " in topic["video_prompt_en"]
@@ -1093,6 +1154,7 @@ async def test_topic_briefs_endpoint_returns_unique_topics_for_single_source_clu
         published_at=now - timedelta(minutes=22),
         created_at=now - timedelta(minutes=22),
         category="business",
+        image_url="https://cdn.example.com/reuters-antitrust-1.jpg",
     )
     second = await create_article(
         db_session,
@@ -1104,6 +1166,7 @@ async def test_topic_briefs_endpoint_returns_unique_topics_for_single_source_clu
         published_at=now - timedelta(minutes=12),
         created_at=now - timedelta(minutes=12),
         category="business",
+        image_url="https://cdn.example.com/reuters-antitrust-2.jpg",
     )
     await db_session.commit()
 
@@ -1146,6 +1209,7 @@ async def test_topic_briefs_endpoint_returns_unique_topics_for_single_source_clu
     assert len(payload["groups"]) == 1
     topic = payload["groups"][0]["topics"][0]
     assert topic["aggregation_type"] == "unique"
+    assert topic["quality_status"] == "publishable"
     assert topic["source_count"] == 1
     assert topic["article_count"] == 2
     assert "Tek kaynak" not in topic["summary_tr"]
@@ -1171,6 +1235,7 @@ async def test_topic_briefs_endpoint_debug_reports_single_source_cluster_reason(
         published_at=now - timedelta(minutes=14),
         created_at=now - timedelta(minutes=14),
         category="sports",
+        image_url="https://cdn.example.com/yahoo-inter-1.jpg",
     )
     await create_article(
         db_session,
@@ -1182,6 +1247,7 @@ async def test_topic_briefs_endpoint_debug_reports_single_source_cluster_reason(
         published_at=now - timedelta(minutes=10),
         created_at=now - timedelta(minutes=10),
         category="sports",
+        image_url="https://cdn.example.com/yahoo-inter-2.jpg",
     )
     await db_session.commit()
 
@@ -1200,6 +1266,7 @@ async def test_topic_briefs_endpoint_debug_reports_single_source_cluster_reason(
     assert payload["analysis_status"] == "ok"
     assert len(payload["groups"]) == 1
     assert payload["groups"][0]["topics"][0]["aggregation_type"] == "unique"
+    assert payload["groups"][0]["topics"][0]["quality_status"] == "publishable"
     assert payload["debug"]["candidate_clusters"] >= 1
     assert payload["debug"]["single_source_clusters"] >= 1
     assert payload["debug"]["multi_source_clusters"] == 0
@@ -1226,6 +1293,7 @@ async def test_topic_briefs_endpoint_returns_unique_topic_for_unclustered_single
         published_at=now - timedelta(minutes=18),
         created_at=now - timedelta(minutes=18),
         category="general",
+        image_url="https://cdn.example.com/ap-flood-fund.jpg",
     )
     await db_session.commit()
 
@@ -1245,9 +1313,111 @@ async def test_topic_briefs_endpoint_returns_unique_topic_for_unclustered_single
     assert len(payload["groups"]) == 1
     topic = payload["groups"][0]["topics"][0]
     assert topic["aggregation_type"] == "unique"
+    assert topic["quality_status"] == "publishable"
     assert topic["source_count"] == 1
     assert topic["article_count"] == 1
     assert len(topic["representative_articles"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_topic_briefs_endpoint_excludes_review_topics_by_default(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ap = await create_source(db_session, slug="ap-review", name="AP Review", category="general")
+
+    await create_article(
+        db_session,
+        source=ap,
+        title="Mayor announces flood cleanup fund after weekend damage",
+        url="https://ap-review.example.com/flood-fund",
+        source_category="general",
+        summary="A mayor announced a cleanup fund after severe weekend flood damage.",
+        published_at=now - timedelta(minutes=18),
+        created_at=now - timedelta(minutes=18),
+        category="general",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3, "debug": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["groups"] == []
+    assert payload["debug"]["publishable_topics_generated"] == 0
+    assert payload["debug"]["review_topics_generated"] == 1
+    review_breakdown = {item["reason"]: item["count"] for item in payload["debug"]["review_breakdown"]}
+    assert review_breakdown["single_source_topic"] >= 1
+    assert review_breakdown["missing_visual_asset"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_topic_briefs_endpoint_include_review_returns_review_topics_after_publishable_topics(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ap = await create_source(db_session, slug="ap-publishable", name="AP Publishable", category="general")
+    reuters = await create_source(db_session, slug="reuters-review", name="Reuters Review", category="general")
+
+    await create_article(
+        db_session,
+        source=ap,
+        title="City opens overnight cooling centers ahead of heatwave",
+        url="https://ap-publishable.example.com/cooling-centers",
+        source_category="general",
+        summary="Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        published_at=now - timedelta(minutes=12),
+        created_at=now - timedelta(minutes=12),
+        category="general",
+        image_url="https://cdn.example.com/ap-cooling-review-test.jpg",
+    )
+    await create_article(
+        db_session,
+        source=reuters,
+        title="Mayor announces flood cleanup fund after weekend damage",
+        url="https://reuters-review.example.com/flood-fund",
+        source_category="general",
+        summary="A mayor announced a cleanup fund after severe weekend flood damage.",
+        published_at=now - timedelta(minutes=8),
+        created_at=now - timedelta(minutes=8),
+        category="general",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    response = await client.get(
+        "/api/v1/analysis/topic-briefs",
+        params={"hours": 3, "include_review": True, "debug": True},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    topics = [topic for group in payload["groups"] for topic in group["topics"]]
+    assert len(topics) == 2
+    assert topics[0]["quality_status"] == "publishable"
+    assert topics[1]["quality_status"] == "review"
+    assert topics[0]["quality_score"] > topics[1]["quality_score"]
+    assert payload["debug"]["publishable_topics_generated"] == 1
+    assert payload["debug"]["review_topics_generated"] == 1
 
 
 @pytest.mark.asyncio
@@ -1287,6 +1457,7 @@ async def test_topic_briefs_endpoint_filters_non_news_utility_pages_from_unique_
         published_at=now - timedelta(minutes=6),
         created_at=now - timedelta(minutes=6),
         category="general",
+        image_url="https://cdn.example.com/ap-cleanup-fund.jpg",
     )
     await db_session.commit()
 
@@ -1305,6 +1476,8 @@ async def test_topic_briefs_endpoint_filters_non_news_utility_pages_from_unique_
     topics = [topic for group in payload["groups"] for topic in group["topics"]]
     assert len(topics) == 1
     assert topics[0]["headline_tr"] == "Mayor announces flood cleanup fund after weekend damage"
+    assert topics[0]["quality_status"] == "publishable"
+    assert topics[0]["quality_score"] > 0.7
     assert payload["debug"]["rejected_articles"] >= 3
     assert payload["debug"]["rejected_unique_candidates"] == 0
     rejection_breakdown = {item["reason"]: item["count"] for item in payload["debug"]["rejection_breakdown"]}
@@ -1393,6 +1566,114 @@ async def test_topic_briefs_endpoint_decodes_html_entities_without_leaking_numer
 
 
 @pytest.mark.asyncio
+async def test_topic_quality_report_endpoint_summarizes_publishable_review_and_rejections(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    guardian = await create_source(db_session, slug="guardian-report", name="The Guardian", category="general")
+    bbc = await create_source(db_session, slug="bbc-report", name="BBC News", category="general")
+    ap = await create_source(db_session, slug="ap-report", name="AP News", category="general")
+    bloomberg = await create_source(db_session, slug="bloomberg-report", name="Bloomberg", category="finance")
+
+    await create_article(
+        db_session,
+        source=guardian,
+        title="Ceasefire talks resume after overnight strikes",
+        url="https://guardian-report.example.com/ceasefire-talks",
+        source_category="general",
+        summary="Negotiators resumed talks after overnight strikes raised pressure on both sides.",
+        published_at=now - timedelta(minutes=28),
+        created_at=now - timedelta(minutes=28),
+        category="world",
+        image_url="https://cdn.example.com/guardian-report.jpg",
+    )
+    await create_article(
+        db_session,
+        source=bbc,
+        title="Negotiators return to ceasefire talks following overnight strikes",
+        url="https://bbc-report.example.com/ceasefire-talks",
+        source_category="general",
+        summary="Fresh strikes were followed by renewed ceasefire talks, according to officials and mediators.",
+        published_at=now - timedelta(minutes=20),
+        created_at=now - timedelta(minutes=20),
+        category="world",
+        image_url="https://cdn.example.com/bbc-report.jpg",
+    )
+    await create_article(
+        db_session,
+        source=ap,
+        title="City opens overnight cooling centers ahead of heatwave",
+        url="https://ap-report.example.com/cooling-centers",
+        source_category="general",
+        summary="Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        published_at=now - timedelta(minutes=12),
+        created_at=now - timedelta(minutes=12),
+        category="general",
+        image_url="https://cdn.example.com/ap-report.jpg",
+    )
+    await create_article(
+        db_session,
+        source=bloomberg,
+        title="subscriptions",
+        url="https://www.bloomberg.com/subscriptions",
+        source_category="finance",
+        summary="subscriptions",
+        published_at=now - timedelta(minutes=7),
+        created_at=now - timedelta(minutes=7),
+        category="business",
+    )
+    await db_session.commit()
+
+    async def raise_ollama_error(self, cluster, visual_assets=None):
+        raise OllamaAnalysisError("ollama unavailable")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        raise_ollama_error,
+    )
+
+    response = await client.get("/api/v1/analysis/topic-quality-report", params={"hours": 3})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["analysis_status"] == "degraded"
+    assert payload["ollama_error"] == "ollama unavailable"
+    assert payload["totals"]["publishable_topics"] == 1
+    assert payload["totals"]["review_topics"] == 1
+    assert payload["totals"]["rejected_articles"] == 1
+    assert payload["totals"]["shared_topics"] == 1
+    assert payload["totals"]["unique_topics"] == 1
+    assert payload["totals"]["avg_quality_score"] > 0
+    assert payload["totals"]["publishable_avg_quality_score"] > 0
+    assert payload["totals"]["review_avg_quality_score"] > 0
+    assert sum(item["count"] for item in payload["totals"]["score_distribution"]) == 2
+
+    rejection_breakdown = {item["reason"]: item["count"] for item in payload["totals"]["rejection_breakdown"]}
+    assert rejection_breakdown["utility_or_hub_page"] >= 1
+    review_breakdown = {item["reason"]: item["count"] for item in payload["totals"]["review_breakdown"]}
+    assert review_breakdown["degraded_generation"] >= 1
+
+    sources = {item["source_slug"]: item for item in payload["sources"]}
+    assert sources["guardian-report"]["review_contributions"] == 1
+    assert sources["guardian-report"]["shared_contributions"] == 1
+    assert sources["guardian-report"]["review_avg_quality_score"] > 0
+    assert sources["bbc-report"]["review_contributions"] == 1
+    assert sources["ap-report"]["publishable_contributions"] == 1
+    assert sources["ap-report"]["unique_contributions"] == 1
+    assert sources["ap-report"]["avg_quality_score"] > 0
+    assert sources["bloomberg-report"]["rejected_article_count"] == 1
+    assert sources["bloomberg-report"]["sample_rejections"][0]["reason"] == "utility_or_hub_page"
+    assert sources["guardian-report"]["lowest_scoring_topics"][0]["quality_status"] == "review"
+    assert payload["sources"][0]["source_slug"] == "bloomberg-report"
+    assert payload["sources"][-1]["source_slug"] == "ap-report"
+    assert payload["totals"]["feedback_count"] == 0
+    assert payload["totals"]["feedback_coverage_percent"] == 0
+    assert payload["totals"]["feedback_breakdown"] == []
+
+
+@pytest.mark.asyncio
 async def test_topic_briefs_endpoint_limit_topics_applies_to_final_shared_and_unique_pool(
     client,
     db_session: AsyncSession,
@@ -1413,6 +1694,7 @@ async def test_topic_briefs_endpoint_limit_topics_applies_to_final_shared_and_un
         published_at=now - timedelta(minutes=20),
         created_at=now - timedelta(minutes=20),
         category="business",
+        image_url="https://cdn.example.com/reuters-oil-shared.jpg",
     )
     shared_second = await create_article(
         db_session,
@@ -1424,6 +1706,7 @@ async def test_topic_briefs_endpoint_limit_topics_applies_to_final_shared_and_un
         published_at=now - timedelta(minutes=17),
         created_at=now - timedelta(minutes=17),
         category="business",
+        image_url="https://cdn.example.com/bloomberg-oil-shared.jpg",
     )
     await create_article(
         db_session,
@@ -1435,6 +1718,7 @@ async def test_topic_briefs_endpoint_limit_topics_applies_to_final_shared_and_un
         published_at=now - timedelta(minutes=12),
         created_at=now - timedelta(minutes=12),
         category="general",
+        image_url="https://cdn.example.com/ap-cooling-centers.jpg",
     )
     await db_session.commit()
 
@@ -1443,7 +1727,7 @@ async def test_topic_briefs_endpoint_limit_topics_applies_to_final_shared_and_un
             {
                 "article_ids": [str(shared_first.id), str(shared_second.id)],
                 "headline_tr": "Rafineri aksakligi petrolu yukseltti",
-                "summary_tr": "Rafineri aksakligi petrol fiyatlarini yukari itti.",
+                "summary_tr": "Rafineri aksakligi petrol fiyatlarini yukari itti ve enerji piyasasinda kisa vadeli arz baskisi yaratti.",
                 "key_points_tr": ["Petrol yukseliste"],
                 "why_it_matters_tr": "Enerji piyasasi etkilenebilir.",
                 "confidence": 0.9,
@@ -1500,6 +1784,385 @@ async def test_topic_briefs_endpoint_limit_topics_applies_to_final_shared_and_un
     topics = [topic for group in payload["groups"] for topic in group["topics"]]
     assert len(topics) == 2
     assert topics[0]["aggregation_type"] == "shared"
+    assert topics[0]["quality_status"] == "publishable"
     assert topics[1]["aggregation_type"] == "unique"
+    assert topics[1]["quality_status"] == "publishable"
+    assert topics[0]["quality_score"] > topics[1]["quality_score"]
     assert payload["debug"]["shared_topics_generated"] >= 1
     assert payload["debug"]["unique_topics_generated"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_topic_briefs_endpoint_groups_sorted_by_highest_quality_score(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    reuters = await create_source(db_session, slug="reuters-groups", name="Reuters Groups", category="finance")
+    bloomberg = await create_source(db_session, slug="bloomberg-groups", name="Bloomberg Groups", category="finance")
+    ap = await create_source(db_session, slug="ap-groups", name="AP Groups", category="general")
+
+    shared_first = await create_article(
+        db_session,
+        source=reuters,
+        title="Oil rises after refinery disruption",
+        url="https://reuters-groups.example.com/oil-disruption",
+        source_category="finance",
+        summary="Oil prices rose after a refinery disruption tightened supply expectations.",
+        published_at=now - timedelta(minutes=20),
+        created_at=now - timedelta(minutes=20),
+        category="business",
+        image_url="https://cdn.example.com/reuters-groups-oil.jpg",
+    )
+    shared_second = await create_article(
+        db_session,
+        source=bloomberg,
+        title="Refinery disruption lifts crude prices",
+        url="https://bloomberg-groups.example.com/oil-disruption",
+        source_category="finance",
+        summary="Crude rose after refinery issues tightened the supply outlook.",
+        published_at=now - timedelta(minutes=18),
+        created_at=now - timedelta(minutes=18),
+        category="business",
+        image_url="https://cdn.example.com/bloomberg-groups-oil.jpg",
+    )
+    await create_article(
+        db_session,
+        source=ap,
+        title="City opens cooling centers before overnight heatwave",
+        url="https://ap-groups.example.com/cooling-centers",
+        source_category="general",
+        summary="Officials opened cooling centers before an overnight heatwave.",
+        published_at=now - timedelta(minutes=9),
+        created_at=now - timedelta(minutes=9),
+        category="general",
+    )
+    await db_session.commit()
+
+    async def fake_analyze_cluster(self, cluster, visual_assets=None):
+        return [
+            {
+                "article_ids": [str(shared_first.id), str(shared_second.id)],
+                "headline_tr": "Rafineri aksakligi petrolu yukseltti",
+                "summary_tr": "Rafineri aksakligi petrol fiyatlarini yukari itti ve enerji piyasasinda arz baskisi yaratti.",
+                "key_points_tr": ["Petrol fiyatlari yukseliste."],
+                "why_it_matters_tr": "Enerji piyasasi kisa vadede etkilenebilir.",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        fake_analyze_cluster,
+    )
+
+    response = await client.get(
+        "/api/v1/analysis/topic-briefs",
+        params={"hours": 3, "include_review": True, "debug": True},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["groups"][0]["category"] == "business"
+    assert payload["groups"][1]["category"] == "general"
+    assert payload["groups"][0]["topics"][0]["quality_score"] > payload["groups"][1]["topics"][0]["quality_score"]
+
+
+@pytest.mark.asyncio
+async def test_topic_feedback_endpoints_upsert_hydrate_and_delete(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ap = await create_source(db_session, slug="ap-feedback", name="AP Feedback", category="general")
+
+    await create_article(
+        db_session,
+        source=ap,
+        title="City opens overnight cooling centers ahead of heatwave",
+        url="https://ap-feedback.example.com/cooling-centers",
+        source_category="general",
+        summary="Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        published_at=now - timedelta(minutes=12),
+        created_at=now - timedelta(minutes=12),
+        category="general",
+        image_url="https://cdn.example.com/ap-feedback-cooling.jpg",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    initial_response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3})
+    assert initial_response.status_code == 200
+    initial_topic = initial_response.json()["groups"][0]["topics"][0]
+    assert initial_topic["latest_feedback"] is None
+
+    payload = {
+        "topic_id": initial_topic["topic_id"],
+        "feedback_label": "approved",
+        "note": "Looks ready for internal curation.",
+        "topic_snapshot": {
+            "headline_tr": initial_topic["headline_tr"],
+            "summary_tr": initial_topic["summary_tr"],
+            "category": initial_topic["category"],
+            "aggregation_type": initial_topic["aggregation_type"],
+            "quality_status": initial_topic["quality_status"],
+            "quality_score": initial_topic["quality_score"],
+            "source_count": initial_topic["source_count"],
+            "article_count": initial_topic["article_count"],
+            "sources": initial_topic["sources"],
+            "source_slugs": [
+                article["source_slug"]
+                for article in initial_topic["representative_articles"]
+                if article.get("source_slug")
+            ],
+            "review_reasons": initial_topic["review_reasons"],
+            "representative_article_ids": [
+                article["id"] for article in initial_topic["representative_articles"]
+            ],
+            "has_visual_asset": bool(initial_topic["visual_assets"]),
+            "has_published_at": any(
+                article.get("published_at") for article in initial_topic["representative_articles"]
+            ),
+        },
+    }
+
+    save_response = await client.put("/api/v1/analysis/topic-feedback", json=payload)
+    assert save_response.status_code == 200
+    assert save_response.json()["latest_feedback"]["label"] == "approved"
+
+    payload["feedback_label"] = "wrong"
+    payload["note"] = "The wording still feels misleading."
+    overwrite_response = await client.put("/api/v1/analysis/topic-feedback", json=payload)
+    assert overwrite_response.status_code == 200
+    assert overwrite_response.json()["latest_feedback"]["label"] == "wrong"
+    assert overwrite_response.json()["latest_feedback"]["note"] == "The wording still feels misleading."
+
+    count_query = await db_session.execute(select(func.count()).select_from(TopicFeedback))
+    assert count_query.scalar_one() == 1
+
+    refreshed_response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3})
+    assert refreshed_response.status_code == 200
+    refreshed_topic = refreshed_response.json()["groups"][0]["topics"][0]
+    assert refreshed_topic["latest_feedback"]["label"] == "wrong"
+    assert refreshed_topic["latest_feedback"]["note"] == "The wording still feels misleading."
+
+    delete_response = await client.delete(f"/api/v1/analysis/topic-feedback/{initial_topic['topic_id']}")
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"topic_id": initial_topic["topic_id"], "deleted": True}
+
+    final_response = await client.get("/api/v1/analysis/topic-briefs", params={"hours": 3})
+    assert final_response.status_code == 200
+    final_topic = final_response.json()["groups"][0]["topics"][0]
+    assert final_topic["latest_feedback"] is None
+
+
+@pytest.mark.asyncio
+async def test_topic_quality_report_endpoint_includes_feedback_coverage(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ap = await create_source(db_session, slug="ap-feedback-report", name="AP Feedback Report", category="general")
+    reuters = await create_source(
+        db_session, slug="reuters-feedback-report", name="Reuters Feedback Report", category="general"
+    )
+
+    await create_article(
+        db_session,
+        source=ap,
+        title="City opens overnight cooling centers ahead of heatwave",
+        url="https://ap-feedback-report.example.com/cooling-centers",
+        source_category="general",
+        summary="Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        published_at=now - timedelta(minutes=12),
+        created_at=now - timedelta(minutes=12),
+        category="general",
+        image_url="https://cdn.example.com/ap-feedback-report-cooling.jpg",
+    )
+    await create_article(
+        db_session,
+        source=reuters,
+        title="Mayor announces flood cleanup fund after weekend damage",
+        url="https://reuters-feedback-report.example.com/flood-fund",
+        source_category="general",
+        summary="A mayor announced a cleanup fund after severe weekend flood damage.",
+        published_at=now - timedelta(minutes=8),
+        created_at=now - timedelta(minutes=8),
+        category="general",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+
+    topics_response = await client.get(
+        "/api/v1/analysis/topic-briefs",
+        params={"hours": 3, "include_review": True},
+    )
+    assert topics_response.status_code == 200
+    topics = [topic for group in topics_response.json()["groups"] for topic in group["topics"]]
+    assert len(topics) == 2
+
+    publishable_topic = next(topic for topic in topics if topic["quality_status"] == "publishable")
+    feedback_payload = {
+        "topic_id": publishable_topic["topic_id"],
+        "feedback_label": "approved",
+        "note": "Strong enough for internal publishing.",
+        "topic_snapshot": {
+            "headline_tr": publishable_topic["headline_tr"],
+            "summary_tr": publishable_topic["summary_tr"],
+            "category": publishable_topic["category"],
+            "aggregation_type": publishable_topic["aggregation_type"],
+            "quality_status": publishable_topic["quality_status"],
+            "quality_score": publishable_topic["quality_score"],
+            "source_count": publishable_topic["source_count"],
+            "article_count": publishable_topic["article_count"],
+            "sources": publishable_topic["sources"],
+            "source_slugs": [
+                article["source_slug"]
+                for article in publishable_topic["representative_articles"]
+                if article.get("source_slug")
+            ],
+            "review_reasons": publishable_topic["review_reasons"],
+            "representative_article_ids": [
+                article["id"] for article in publishable_topic["representative_articles"]
+            ],
+            "has_visual_asset": bool(publishable_topic["visual_assets"]),
+            "has_published_at": any(
+                article.get("published_at") for article in publishable_topic["representative_articles"]
+            ),
+        },
+    }
+    save_response = await client.put("/api/v1/analysis/topic-feedback", json=feedback_payload)
+    assert save_response.status_code == 200
+
+    report_response = await client.get("/api/v1/analysis/topic-quality-report", params={"hours": 3})
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["totals"]["feedback_count"] == 1
+    assert report["totals"]["feedback_coverage_percent"] == 50.0
+    assert report["totals"]["feedback_breakdown"] == [{"label": "approved", "count": 1}]
+
+
+@pytest.mark.asyncio
+async def test_topic_score_tuning_report_requires_minimum_feedback_thresholds(
+    client,
+    db_session: AsyncSession,
+) -> None:
+    for index in range(10):
+        await create_topic_feedback_record(
+            db_session,
+            topic_id=f"under-threshold-{index}",
+            feedback_label="approved" if index % 2 == 0 else "wrong",
+            quality_score=0.7 if index % 2 == 0 else 0.35,
+        )
+    await db_session.commit()
+
+    response = await client.get("/api/v1/analysis/topic-score-tuning-report", params={"days": 30})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["totals"]["feedback_count"] == 10
+    assert payload["totals"]["eligible_for_recommendations"] is False
+    assert payload["recommendations"] == []
+    assert any("Not enough feedback yet" in note for note in payload["notes"])
+    assert any("Thresholds:" in note for note in payload["notes"])
+
+
+@pytest.mark.asyncio
+async def test_topic_score_tuning_report_generates_recommendations_and_mismatch_samples(
+    client,
+    db_session: AsyncSession,
+) -> None:
+    for index in range(20):
+        await create_topic_feedback_record(
+            db_session,
+            topic_id=f"approved-shared-{index}",
+            feedback_label="approved",
+            aggregation_type="shared",
+            quality_status="publishable",
+            quality_score=0.42 if index == 0 else 0.86,
+            score_features={
+                "shared_topic": True,
+                "unique_topic": False,
+                "source_count_ge_2": True,
+                "source_count_ge_3": False,
+                "has_visual_asset": True,
+                "missing_visual_asset": False,
+                "non_thin_summary": True,
+                "thin_summary": False,
+                "non_truncated_headline": True,
+                "truncated_headline": False,
+                "has_published_at": True,
+                "missing_published_at": False,
+                "article_count_ge_2": True,
+                "degraded_generation": False,
+                "review_status": False,
+            },
+        )
+
+    for index in range(20):
+        await create_topic_feedback_record(
+            db_session,
+            topic_id=f"negative-unique-{index}",
+            feedback_label="wrong" if index % 2 == 0 else "boring",
+            aggregation_type="unique",
+            quality_status="review",
+            quality_score=0.82 if index == 0 else 0.28,
+            source_count=1,
+            article_count=1,
+            review_reasons=["single_source_topic"],
+            score_features={
+                "shared_topic": False,
+                "unique_topic": True,
+                "source_count_ge_2": False,
+                "source_count_ge_3": False,
+                "has_visual_asset": False,
+                "missing_visual_asset": True,
+                "non_thin_summary": False,
+                "thin_summary": True,
+                "non_truncated_headline": True,
+                "truncated_headline": False,
+                "has_published_at": True,
+                "missing_published_at": False,
+                "article_count_ge_2": False,
+                "degraded_generation": False,
+                "review_status": True,
+            },
+        )
+    await db_session.commit()
+
+    response = await client.get("/api/v1/analysis/topic-score-tuning-report", params={"days": 30})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["totals"]["feedback_count"] == 40
+    assert payload["totals"]["approved_count"] == 20
+    assert payload["totals"]["negative_count"] == 20
+    assert payload["totals"]["eligible_for_recommendations"] is True
+
+    recommendations = {item["feature"]: item for item in payload["recommendations"]}
+    assert "shared_topic" in recommendations
+    assert recommendations["shared_topic"]["delta"] == pytest.approx(0.03)
+    assert recommendations["shared_topic"]["recommended_weight"] > recommendations["shared_topic"]["current_weight"]
+
+    assert payload["calibration_summary"]["high_score_negative_count"] >= 1
+    assert payload["calibration_summary"]["low_score_approved_count"] >= 1
+    assert payload["mismatch_samples"]["high_score_negative"][0]["feedback_label"] in {"wrong", "boring"}
+    assert payload["mismatch_samples"]["high_score_negative"][0]["quality_score"] >= 0.75
+    assert payload["mismatch_samples"]["low_score_approved"][0]["feedback_label"] == "approved"
+    assert payload["mismatch_samples"]["low_score_approved"][0]["quality_score"] <= 0.55

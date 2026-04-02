@@ -31,6 +31,12 @@ class ArticleResponse(ArticleBase):
     model_config = {"from_attributes": True}
 
 
+class ArticleDetailResponse(ArticleResponse):
+    content_text: str | None = None
+    detail_enriched: bool = False
+    detail_fetched_at: datetime | None = None
+
+
 class ArticleListResponse(BaseModel):
     items: list[ArticleResponse]
     total: int

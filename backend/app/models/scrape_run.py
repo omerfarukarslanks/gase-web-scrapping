@@ -10,7 +10,10 @@ from app.db.base import Base, TimestampMixin, UUIDMixin
 class ScrapeRun(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "scrape_runs"
 
-    source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sources.id"))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"), nullable=True)
+    source_name_snapshot: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_slug_snapshot: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    source_category_snapshot: Mapped[str | None] = mapped_column(String(20), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="running")
     articles_found: Mapped[int] = mapped_column(Integer, default=0)
     articles_new: Mapped[int] = mapped_column(Integer, default=0)

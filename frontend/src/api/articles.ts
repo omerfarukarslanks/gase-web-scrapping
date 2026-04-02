@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { Article, ArticleFilters, ArticleListResponse } from '../types/article';
+import type { Article, ArticleDetail, ArticleFilters, ArticleListResponse } from '../types/article';
 
 export async function fetchArticles(filters: ArticleFilters): Promise<ArticleListResponse> {
   const params = Object.fromEntries(
@@ -16,7 +16,7 @@ export async function fetchTrendingArticles(hours = 24, limit = 20): Promise<Art
   return data;
 }
 
-export async function fetchArticle(id: string): Promise<Article> {
+export async function fetchArticle(id: string): Promise<ArticleDetail> {
   const { data } = await apiClient.get(`/articles/${id}`);
   return data;
 }

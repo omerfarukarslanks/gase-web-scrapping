@@ -100,10 +100,23 @@ class VisualAsset(BaseModel):
     alt_text: str = ""
 
 
+FeedbackLabel = Literal["approved", "wrong", "boring", "malformed"]
+
+
+class TopicLatestFeedback(BaseModel):
+    label: FeedbackLabel
+    note: str | None = None
+    updated_at: datetime
+
+
 class TopicBrief(BaseModel):
     topic_id: str
     category: str
     aggregation_type: Literal["shared", "unique"]
+    quality_status: Literal["publishable", "review"] = "publishable"
+    quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    review_reasons: list[str] = Field(default_factory=list)
+    latest_feedback: TopicLatestFeedback | None = None
     headline_tr: str
     summary_tr: str
     key_points_tr: list[str] = Field(default_factory=list)
@@ -145,6 +158,16 @@ class AnalysisRejectionDebug(BaseModel):
     count: int
 
 
+class AnalysisReviewDebug(BaseModel):
+    reason: str
+    count: int
+
+
+class AnalysisFeedbackDebug(BaseModel):
+    label: FeedbackLabel
+    count: int
+
+
 class AnalysisDebug(BaseModel):
     fetched_articles: int = 0
     prepared_articles: int = 0
@@ -154,11 +177,14 @@ class AnalysisDebug(BaseModel):
     single_source_clusters: int = 0
     shared_topics_generated: int = 0
     unique_topics_generated: int = 0
+    publishable_topics_generated: int = 0
+    review_topics_generated: int = 0
     rejected_unique_candidates: int = 0
     dropped_unique_articles: int = 0
     source_breakdown: list[AnalysisSourceDebug] = Field(default_factory=list)
     cluster_previews: list[AnalysisClusterDebug] = Field(default_factory=list)
     rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
+    review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     ollama_base_url: str | None = None
     ollama_error: str | None = None
@@ -171,3 +197,162 @@ class TopicBriefsResponse(BaseModel):
     window_end: datetime
     groups: list[TopicGroup] = Field(default_factory=list)
     debug: AnalysisDebug | None = None
+
+
+class TopicQualitySampleRejection(BaseModel):
+    title: str
+    reason: str
+
+
+class TopicQualitySampleReviewTopic(BaseModel):
+    headline: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class TopicQualityScoreBand(BaseModel):
+    label: str
+    count: int = 0
+
+
+class TopicQualityScoredTopic(BaseModel):
+    headline: str
+    quality_status: Literal["publishable", "review"]
+    quality_score: float = Field(ge=0.0, le=1.0)
+
+
+class TopicQualityTotals(BaseModel):
+    fetched_articles: int = 0
+    prepared_articles: int = 0
+    rejected_articles: int = 0
+    candidate_clusters: int = 0
+    publishable_topics: int = 0
+    review_topics: int = 0
+    rejected_topics: int = 0
+    shared_topics: int = 0
+    unique_topics: int = 0
+    avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    publishable_avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    review_avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    feedback_count: int = 0
+    feedback_coverage_percent: float = Field(default=0.0, ge=0.0, le=100.0)
+    score_distribution: list[TopicQualityScoreBand] = Field(default_factory=list)
+    rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
+    review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
+    feedback_breakdown: list[AnalysisFeedbackDebug] = Field(default_factory=list)
+
+
+class TopicQualitySourceReport(BaseModel):
+    source_slug: str
+    source_name: str
+    article_count: int = 0
+    prepared_article_count: int = 0
+    rejected_article_count: int = 0
+    topic_contributions: int = 0
+    publishable_contributions: int = 0
+    review_contributions: int = 0
+    shared_contributions: int = 0
+    unique_contributions: int = 0
+    avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    publishable_avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    review_avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
+    review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
+    sample_rejections: list[TopicQualitySampleRejection] = Field(default_factory=list)
+    sample_review_topics: list[TopicQualitySampleReviewTopic] = Field(default_factory=list)
+    lowest_scoring_topics: list[TopicQualityScoredTopic] = Field(default_factory=list)
+
+
+class TopicQualityReportResponse(BaseModel):
+    analysis_status: Literal["ok", "degraded"]
+    generated_at: datetime
+    window_start: datetime
+    window_end: datetime
+    totals: TopicQualityTotals
+    sources: list[TopicQualitySourceReport] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    ollama_error: str | None = None
+
+
+class TopicFeedbackSnapshotInput(BaseModel):
+    headline_tr: str
+    summary_tr: str
+    category: str
+    aggregation_type: Literal["shared", "unique"]
+    quality_status: Literal["publishable", "review"]
+    quality_score: float = Field(ge=0.0, le=1.0)
+    source_count: int
+    article_count: int
+    sources: list[str] = Field(default_factory=list)
+    source_slugs: list[str] = Field(default_factory=list)
+    review_reasons: list[str] = Field(default_factory=list)
+    representative_article_ids: list[uuid.UUID] = Field(default_factory=list)
+    has_visual_asset: bool = False
+    has_published_at: bool = False
+
+
+class TopicFeedbackUpsertRequest(BaseModel):
+    topic_id: str
+    feedback_label: FeedbackLabel
+    note: str | None = None
+    topic_snapshot: TopicFeedbackSnapshotInput
+
+
+class TopicFeedbackResponse(BaseModel):
+    topic_id: str
+    latest_feedback: TopicLatestFeedback
+
+
+class TopicFeedbackDeleteResponse(BaseModel):
+    topic_id: str
+    deleted: bool
+
+
+class TopicScoreWeightRecommendation(BaseModel):
+    feature: str
+    current_weight: float
+    recommended_weight: float
+    delta: float
+    active_count: int
+    inactive_count: int
+    approval_rate_when_active: float = Field(ge=0.0, le=1.0)
+    approval_rate_when_inactive: float = Field(ge=0.0, le=1.0)
+    lift: float
+
+
+class TopicScoreTuningSample(BaseModel):
+    topic_id: str
+    headline_tr: str
+    feedback_label: FeedbackLabel
+    quality_status: Literal["publishable", "review"]
+    quality_score: float = Field(ge=0.0, le=1.0)
+
+
+class TopicScoreTuningTotals(BaseModel):
+    feedback_count: int = 0
+    approved_count: int = 0
+    negative_count: int = 0
+    eligible_for_recommendations: bool = False
+    feedback_breakdown: list[AnalysisFeedbackDebug] = Field(default_factory=list)
+
+
+class TopicScoreTuningCalibrationSummary(BaseModel):
+    high_score_negative_count: int = 0
+    low_score_approved_count: int = 0
+
+
+class TopicScoreTuningMismatchSamples(BaseModel):
+    high_score_negative: list[TopicScoreTuningSample] = Field(default_factory=list)
+    low_score_approved: list[TopicScoreTuningSample] = Field(default_factory=list)
+
+
+class TopicScoreTuningReportResponse(BaseModel):
+    generated_at: datetime
+    days: int
+    source_category: str | None = None
+    category: str | None = None
+    totals: TopicScoreTuningTotals
+    current_weights: dict[str, float] = Field(default_factory=dict)
+    recommendations: list[TopicScoreWeightRecommendation] = Field(default_factory=list)
+    calibration_summary: TopicScoreTuningCalibrationSummary
+    mismatch_samples: TopicScoreTuningMismatchSamples
+    notes: list[str] = Field(default_factory=list)

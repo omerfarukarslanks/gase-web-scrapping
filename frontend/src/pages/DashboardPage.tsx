@@ -44,8 +44,8 @@ export default function DashboardPage() {
       <h2 className="text-2xl font-bold mb-6">Dashboard</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard icon={Newspaper} label="Bugunun Haberleri" value={stats.articles_today} color="bg-blue-600" />
-        <StatCard icon={Database} label="Toplam Haber" value={stats.total_articles} color="bg-green-600" />
+        <StatCard icon={Newspaper} label="Bugün Çekilen Haberler" value={stats.articles_today} color="bg-blue-600" />
+        <StatCard icon={Database} label="Toplam Çekilen Haber" value={stats.total_articles} color="bg-green-600" />
         <StatCard icon={Activity} label="Aktif Kaynaklar" value={`${stats.active_sources}/${stats.total_sources}`} color="bg-purple-600" />
         <StatCard
           icon={Clock}
@@ -57,7 +57,7 @@ export default function DashboardPage() {
 
       {stats.articles_by_source.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6 mb-8">
-          <h3 className="text-lg font-semibold mb-4">Kaynaga Gore Haberler (Bugun)</h3>
+          <h3 className="text-lg font-semibold mb-4">Kaynağa Göre Çekilen Haberler (Bugün)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={stats.articles_by_source}>
               <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} fontSize={12} />

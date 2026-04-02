@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
   Clipboard,
@@ -8,12 +8,19 @@ import {
   RefreshCw,
   Sparkles,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchTopicBriefs } from '../api/analysis';
+import { deleteTopicFeedback, fetchTopicBriefs, saveTopicFeedback } from '../api/analysis';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { buildRemotionPayload, saveRemotionPayload } from '../lib/remotionPayload';
-import type { TopicBrief, TopicBriefFilters } from '../types/analysis';
+import type {
+  FeedbackLabel,
+  TopicBrief,
+  TopicBriefFilters,
+  TopicBriefsResponse,
+  TopicFeedbackSnapshotInput,
+  TopicLatestFeedback,
+} from '../types/analysis';
 
 const categoryOptions = [
   { value: '', label: 'Tum konular' },
@@ -36,23 +43,93 @@ const sourceCategoryOptions = [
   { value: 'sports', label: 'Spor' },
 ];
 
+const feedbackOptions: Array<{
+  value: FeedbackLabel;
+  label: string;
+  className: string;
+}> = [
+  { value: 'approved', label: 'Approved', className: 'bg-emerald-600 hover:bg-emerald-700 text-white' },
+  { value: 'wrong', label: 'Wrong', className: 'bg-rose-600 hover:bg-rose-700 text-white' },
+  { value: 'boring', label: 'Boring', className: 'bg-amber-500 hover:bg-amber-600 text-white' },
+  { value: 'malformed', label: 'Malformed', className: 'bg-slate-700 hover:bg-slate-800 text-white' },
+];
+
 async function copyText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);
   }
 }
 
+function buildTopicFeedbackSnapshot(topic: TopicBrief): TopicFeedbackSnapshotInput {
+  return {
+    headline_tr: topic.headline_tr,
+    summary_tr: topic.summary_tr,
+    category: topic.category,
+    aggregation_type: topic.aggregation_type,
+    quality_status: topic.quality_status,
+    quality_score: topic.quality_score,
+    source_count: topic.source_count,
+    article_count: topic.article_count,
+    sources: topic.sources,
+    source_slugs: topic.representative_articles
+      .map((article) => article.source_slug)
+      .filter((value): value is string => Boolean(value)),
+    review_reasons: topic.review_reasons,
+    representative_article_ids: topic.representative_articles.map((article) => article.id),
+    has_visual_asset: topic.visual_assets.length > 0,
+    has_published_at: topic.representative_articles.some((article) => Boolean(article.published_at)),
+  };
+}
+
+function updateTopicFeedbackInResponse(
+  response: TopicBriefsResponse | undefined,
+  topicId: string,
+  latestFeedback: TopicLatestFeedback | null
+): TopicBriefsResponse | undefined {
+  if (!response) return response;
+  return {
+    ...response,
+    groups: response.groups.map((group) => ({
+      ...group,
+      topics: group.topics.map((topic) =>
+        topic.topic_id === topicId
+          ? {
+              ...topic,
+              latest_feedback: latestFeedback,
+            }
+          : topic
+      ),
+    })),
+  };
+}
+
 function TopicCard({
   topic,
+  moderationMode,
   onCopyJson,
   onOpenPreview,
   onCopyPrompt,
+  onSaveFeedback,
+  onDeleteFeedback,
+  feedbackPending,
+  deletePending,
 }: {
   topic: TopicBrief;
+  moderationMode: boolean;
   onCopyJson: (topic: TopicBrief) => void;
   onOpenPreview: (topic: TopicBrief) => void;
   onCopyPrompt: (topic: TopicBrief) => void;
+  onSaveFeedback: (topic: TopicBrief, label: FeedbackLabel, note: string | null) => void;
+  onDeleteFeedback: (topicId: string) => void;
+  feedbackPending: boolean;
+  deletePending: boolean;
 }) {
+  const [note, setNote] = useState(topic.latest_feedback?.note ?? '');
+
+  useEffect(() => {
+    setNote(topic.latest_feedback?.note ?? '');
+  }, [topic.latest_feedback?.label, topic.latest_feedback?.note, topic.latest_feedback?.updated_at]);
+
   return (
     <article className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -67,6 +144,22 @@ function TopicCard({
             <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
               guven {(topic.confidence * 100).toFixed(0)}%
             </span>
+            {moderationMode ? (
+              <>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                    topic.quality_status === 'publishable'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-amber-50 text-amber-700'
+                  }`}
+                >
+                  {topic.quality_status}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+                  skor {topic.quality_score.toFixed(3)}
+                </span>
+              </>
+            ) : null}
           </div>
 
           <div>
@@ -135,6 +228,85 @@ function TopicCard({
               </div>
             </div>
           </div>
+
+          {moderationMode ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Moderation</p>
+                  <p className="mt-2 text-sm font-medium text-slate-700">
+                    Status: <span className="font-semibold text-slate-900">{topic.quality_status}</span>
+                  </p>
+                  {topic.review_reasons.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {topic.review_reasons.map((reason) => (
+                        <span
+                          key={reason}
+                          className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800"
+                        >
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-slate-500">Bu topic icin aktif review reason yok.</p>
+                  )}
+                </div>
+
+                {topic.latest_feedback ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+                    <p className="font-semibold uppercase tracking-[0.14em] text-slate-500">Latest feedback</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">{topic.latest_feedback.label}</p>
+                    <p className="mt-1">{new Date(topic.latest_feedback.updated_at).toLocaleString('tr-TR')}</p>
+                    {topic.latest_feedback.note ? (
+                      <p className="mt-2 max-w-xs text-sm leading-6 text-slate-700">{topic.latest_feedback.note}</p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-3 text-xs text-slate-500">
+                    Bu topic icin feedback yok.
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4">
+                <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Kisa not
+                </label>
+                <textarea
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  placeholder="Neden approved, wrong, boring ya da malformed?"
+                  disabled={feedbackPending || deletePending}
+                  className="mt-2 min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700 outline-none transition focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-slate-100"
+                />
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {feedbackOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={feedbackPending || deletePending}
+                    onClick={() => onSaveFeedback(topic, option.value, note.trim() || null)}
+                    className={`inline-flex items-center justify-center rounded-2xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${option.className}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+                {topic.latest_feedback ? (
+                  <button
+                    type="button"
+                    disabled={feedbackPending || deletePending}
+                    onClick={() => onDeleteFeedback(topic.topic_id)}
+                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {deletePending ? 'Temizleniyor...' : 'Feedback temizle'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 lg:w-56">
@@ -173,15 +345,76 @@ function TopicCard({
 
 export default function PromptLibraryPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [filters, setFilters] = useState<TopicBriefFilters>({
     hours: 3,
     limit_topics: 12,
   });
+  const [moderationMode, setModerationMode] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const effectiveFilters: TopicBriefFilters = moderationMode
+    ? { ...filters, include_review: true }
+    : { ...filters, include_review: undefined };
 
   const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['topic-briefs', filters],
-    queryFn: () => fetchTopicBriefs(filters),
+    queryKey: ['topic-briefs', effectiveFilters],
+    queryFn: () => fetchTopicBriefs(effectiveFilters),
+  });
+
+  const saveFeedbackMutation = useMutation({
+    mutationFn: saveTopicFeedback,
+    onMutate: async (payload) => {
+      await queryClient.cancelQueries({ queryKey: ['topic-briefs'] });
+      const previous = queryClient.getQueriesData<TopicBriefsResponse>({ queryKey: ['topic-briefs'] });
+      const optimisticFeedback: TopicLatestFeedback = {
+        label: payload.feedback_label,
+        note: payload.note ?? null,
+        updated_at: new Date().toISOString(),
+      };
+      queryClient.setQueriesData<TopicBriefsResponse>({ queryKey: ['topic-briefs'] }, (current) =>
+        updateTopicFeedbackInResponse(current, payload.topic_id, optimisticFeedback)
+      );
+      return { previous };
+    },
+    onError: (_error, _payload, context) => {
+      context?.previous.forEach(([queryKey, queryData]) => {
+        queryClient.setQueryData(queryKey, queryData);
+      });
+      setMessage('Feedback kaydedilemedi.');
+    },
+    onSuccess: (response) => {
+      queryClient.setQueriesData<TopicBriefsResponse>({ queryKey: ['topic-briefs'] }, (current) =>
+        updateTopicFeedbackInResponse(current, response.topic_id, response.latest_feedback)
+      );
+      setMessage('Feedback kaydedildi.');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['topic-briefs'] });
+    },
+  });
+
+  const deleteFeedbackMutation = useMutation({
+    mutationFn: deleteTopicFeedback,
+    onMutate: async (topicId) => {
+      await queryClient.cancelQueries({ queryKey: ['topic-briefs'] });
+      const previous = queryClient.getQueriesData<TopicBriefsResponse>({ queryKey: ['topic-briefs'] });
+      queryClient.setQueriesData<TopicBriefsResponse>({ queryKey: ['topic-briefs'] }, (current) =>
+        updateTopicFeedbackInResponse(current, topicId, null)
+      );
+      return { previous };
+    },
+    onError: (_error, _topicId, context) => {
+      context?.previous.forEach(([queryKey, queryData]) => {
+        queryClient.setQueryData(queryKey, queryData);
+      });
+      setMessage('Feedback temizlenemedi.');
+    },
+    onSuccess: () => {
+      setMessage('Feedback temizlendi.');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['topic-briefs'] });
+    },
   });
 
   const handleCopyJson = async (topic: TopicBrief) => {
@@ -198,6 +431,19 @@ export default function PromptLibraryPage() {
   const handleOpenPreview = (topic: TopicBrief) => {
     saveRemotionPayload(buildRemotionPayload(topic));
     navigate('/video-preview');
+  };
+
+  const handleSaveFeedback = (topic: TopicBrief, feedbackLabel: FeedbackLabel, note: string | null) => {
+    saveFeedbackMutation.mutate({
+      topic_id: topic.topic_id,
+      feedback_label: feedbackLabel,
+      note,
+      topic_snapshot: buildTopicFeedbackSnapshot(topic),
+    });
+  };
+
+  const handleDeleteFeedback = (topicId: string) => {
+    deleteFeedbackMutation.mutate(topicId);
   };
 
   if (isLoading && !data) return <LoadingSpinner />;
@@ -297,13 +543,24 @@ export default function PromptLibraryPage() {
             </label>
           </div>
 
-          <button
-            onClick={() => refetch()}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-          >
-            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
-            Yenile
-          </button>
+          <div className="flex flex-col gap-3">
+            <label className="inline-flex items-center gap-3 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700">
+              <input
+                type="checkbox"
+                checked={moderationMode}
+                onChange={(event) => setModerationMode(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              Moderation Mode
+            </label>
+            <button
+              onClick={() => refetch()}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+              Yenile
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
@@ -311,6 +568,11 @@ export default function PromptLibraryPage() {
             <Clock3 className="h-4 w-4" />
             {data ? `${new Date(data.window_start).toLocaleString('tr-TR')} - ${new Date(data.window_end).toLocaleString('tr-TR')}` : 'Pencere bekleniyor'}
           </span>
+          {moderationMode ? (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">
+              Review topicler gorunur. Kartlardan approved / wrong / boring / malformed feedback verebilirsin.
+            </span>
+          ) : null}
           {message ? <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">{message}</span> : null}
         </div>
       </section>
@@ -346,9 +608,14 @@ export default function PromptLibraryPage() {
                 <TopicCard
                   key={topic.topic_id}
                   topic={topic}
+                  moderationMode={moderationMode}
                   onCopyJson={handleCopyJson}
                   onCopyPrompt={handleCopyPrompt}
                   onOpenPreview={handleOpenPreview}
+                  onSaveFeedback={handleSaveFeedback}
+                  onDeleteFeedback={handleDeleteFeedback}
+                  feedbackPending={saveFeedbackMutation.isPending && saveFeedbackMutation.variables?.topic_id === topic.topic_id}
+                  deletePending={deleteFeedbackMutation.isPending && deleteFeedbackMutation.variables === topic.topic_id}
                 />
               ))}
             </div>

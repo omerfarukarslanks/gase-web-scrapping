@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,17 +6,20 @@ from app.db.session import get_db
 from app.models.article import Article
 from app.models.source import Source
 from app.schemas.source import SourceResponse, SourceUpdate, SourceWithStats
-from app.workers.scrape_tasks import scrape_by_category, scrape_single
+from app.services.scrape_dashboard_service import start_of_local_day_utc_naive
+from app.workers.scrape_tasks import scrape_all_active_sources, scrape_by_category, scrape_single
 
 router = APIRouter()
 
 
 @router.get("", response_model=list[SourceWithStats])
 async def list_sources(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Source).order_by(Source.name))
+    result = await db.execute(
+        select(Source).where(Source.is_active.is_(True)).order_by(Source.name)
+    )
     sources = list(result.scalars().all())
 
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = start_of_local_day_utc_naive()
     response = []
 
     for source in sources:
@@ -43,12 +44,14 @@ async def list_sources(db: AsyncSession = Depends(get_db)):
 
 @router.get("/{slug}", response_model=SourceWithStats)
 async def get_source(slug: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Source).where(Source.slug == slug))
+    result = await db.execute(
+        select(Source).where(Source.slug == slug, Source.is_active.is_(True))
+    )
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = start_of_local_day_utc_naive()
     today_count = await db.execute(
         select(func.count()).where(
             Article.source_id == source.id,
@@ -96,6 +99,5 @@ async def trigger_scrape(
         scrape_by_category.delay(category)
         return {"message": f"Scrape triggered for category: {category}"}
     else:
-        scrape_by_category.delay("general")
-        scrape_by_category.delay("finance")
-        return {"message": "Scrape triggered for all sources"}
+        scrape_all_active_sources.delay()
+        return {"message": "Scrape triggered for all active sources"}

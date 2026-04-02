@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class ScrapeRunResponse(BaseModel):
     id: uuid.UUID
-    source_id: uuid.UUID
+    source_id: uuid.UUID | None
     status: str
     articles_found: int
     articles_new: int

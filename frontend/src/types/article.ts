@@ -20,6 +20,12 @@ export interface Article {
   has_paywall: boolean;
 }
 
+export interface ArticleDetail extends Article {
+  content_text: string | null;
+  detail_enriched: boolean;
+  detail_fetched_at: string | null;
+}
+
 export interface ArticleListResponse {
   items: Article[];
   total: number;

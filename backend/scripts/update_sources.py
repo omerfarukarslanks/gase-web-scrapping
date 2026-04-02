@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.db.session import async_session_factory, engine
 from app.models import Article, ScrapeRun, Source  # noqa: F401 - registers all models
+from app.source_policy import REMOVED_SOURCE_SLUGS
 from scripts.seed_sources import SOURCES, build_source_payload
 
 
@@ -15,6 +16,9 @@ async def update():
         skipped = 0
 
         for source_data in SOURCES:
+            if source_data["slug"] in REMOVED_SOURCE_SLUGS:
+                print(f"  [SKIP] '{source_data['slug']}' kaldirilmis kaynak listesinde")
+                continue
             result = await session.execute(
                 select(Source).where(Source.slug == source_data["slug"])
             )
@@ -29,23 +33,27 @@ async def update():
             new_feeds = payload.get("rss_feeds", [])
             new_scraper_type = payload.get("scraper_type", "rss")
             new_config = payload.get("config")
+            new_is_active = payload.get("is_active", True)
 
             old_feeds = source.rss_feeds or []
             same_feeds = old_feeds == new_feeds
             same_scraper_type = source.scraper_type == new_scraper_type
             same_config = (source.config or None) == (new_config or None)
+            same_is_active = source.is_active == new_is_active
 
-            if same_feeds and same_scraper_type and same_config:
+            if same_feeds and same_scraper_type and same_config and same_is_active:
                 print(f"  [OK]   {source_data['name']} — degisiklik yok")
                 continue
 
             source.rss_feeds = new_feeds
             source.scraper_type = new_scraper_type
             source.config = new_config
+            source.is_active = new_is_active
             updated += 1
             print(f"  [UPDATE] {source_data['name']}")
             print(f"           Feed: {len(old_feeds)} → {len(new_feeds)}")
             print(f"           Scraper: {source.scraper_type}")
+            print(f"           Active: {source.is_active}")
 
         await session.commit()
         print(f"\nTamamlandi: {updated} kaynak guncellendi, {skipped} kaynak atlatildi.")

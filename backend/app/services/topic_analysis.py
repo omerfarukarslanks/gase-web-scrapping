@@ -22,16 +22,37 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.models.article import Article
 from app.models.source import Source
+from app.models.topic_feedback import TopicFeedback
 from app.schemas.analysis import (
+    AnalysisFeedbackDebug,
     AnalysisClusterDebug,
     AnalysisDebug,
     AnalysisRejectionDebug,
+    AnalysisReviewDebug,
     AnalysisSourceDebug,
     RemotionStat,
     TopicBrief,
     TopicBriefsResponse,
+    TopicFeedbackDeleteResponse,
+    TopicFeedbackResponse,
+    TopicFeedbackSnapshotInput,
+    TopicFeedbackUpsertRequest,
     TopicGroup,
+    TopicLatestFeedback,
+    TopicQualityReportResponse,
+    TopicQualityScoreBand,
+    TopicQualityScoredTopic,
+    TopicQualitySampleRejection,
+    TopicQualitySampleReviewTopic,
+    TopicQualitySourceReport,
+    TopicQualityTotals,
     TopicRepresentativeArticle,
+    TopicScoreTuningCalibrationSummary,
+    TopicScoreTuningMismatchSamples,
+    TopicScoreTuningReportResponse,
+    TopicScoreTuningSample,
+    TopicScoreTuningTotals,
+    TopicScoreWeightRecommendation,
     VisualAsset,
     VideoPlan,
     VideoPlanScene,
@@ -42,6 +63,7 @@ from app.services.remotion_storyboard_service import (
     RemotionStoryboardContext,
     RemotionStoryboardService,
 )
+from app.services.article_visibility import apply_article_visibility_filters
 from app.services.visual_asset_service import VisualAssetCandidate, VisualAssetResolver
 from app.scrapers.utils.deduplication import normalize_title, titles_are_similar
 
@@ -268,6 +290,39 @@ VALID_REJECTION_REASONS = {
     "low_signal_unique",
     "template_mismatch",
 }
+VALID_REVIEW_REASONS = {
+    "single_source_topic",
+    "missing_visual_asset",
+    "thin_summary",
+    "truncated_headline",
+    "degraded_generation",
+}
+VALID_FEEDBACK_LABELS = {"approved", "wrong", "boring", "malformed"}
+QUALITY_SCORE_WEIGHTS: dict[str, float] = {
+    "base": 0.35,
+    "shared_topic": 0.20,
+    "unique_topic": 0.08,
+    "source_count_ge_2": 0.12,
+    "source_count_ge_3": 0.05,
+    "has_visual_asset": 0.10,
+    "missing_visual_asset": -0.08,
+    "non_thin_summary": 0.10,
+    "thin_summary": -0.10,
+    "non_truncated_headline": 0.08,
+    "truncated_headline": -0.12,
+    "has_published_at": 0.05,
+    "missing_published_at": -0.08,
+    "article_count_ge_2": 0.05,
+    "degraded_generation": -0.12,
+    "review_status": -0.05,
+}
+QUALITY_SCORE_FEATURES = tuple(feature for feature in QUALITY_SCORE_WEIGHTS if feature != "base")
+TUNING_MIN_FEEDBACK = 40
+TUNING_MIN_APPROVED = 15
+TUNING_MIN_NEGATIVE = 15
+TUNING_MIN_FEATURE_SUPPORT = 10
+HIGH_SCORE_NEGATIVE_THRESHOLD = 0.75
+LOW_SCORE_APPROVED_THRESHOLD = 0.55
 TEXT_NORMALIZATION_TRANSLATION = str.maketrans(
     {
         "\xa0": " ",
@@ -280,6 +335,19 @@ TEXT_NORMALIZATION_TRANSLATION = str.maketrans(
         "\u2014": "-",
         "\u2026": "...",
     }
+)
+SENTENCE_PROTECTED_ABBREVIATIONS = (
+    "vs.",
+    "mr.",
+    "mrs.",
+    "ms.",
+    "dr.",
+    "prof.",
+    "sr.",
+    "jr.",
+    "st.",
+    "u.s.",
+    "u.k.",
 )
 
 
@@ -306,12 +374,69 @@ class AnalysisRejection:
     stage: str
     title: str
     url: str
+    source_slug: str
+    source_name: str
 
 
 @dataclass(slots=True)
 class PreparedArticlesResult:
     prepared_articles: list[PreparedArticle]
     rejections: list[AnalysisRejection] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class TopicAnalysisEntry:
+    topic: TopicBrief
+    quality_status: str
+    quality_score: float
+    score_features: dict[str, bool] = field(default_factory=dict)
+    review_reasons: tuple[str, ...] = ()
+    source_slugs: tuple[str, ...] = ()
+    source_names: tuple[str, ...] = ()
+    degraded_generation: bool = False
+
+
+@dataclass(slots=True)
+class TopicAnalysisRunResult:
+    analysis_status: str
+    window_start: datetime
+    window_end: datetime
+    articles: list[Article]
+    prepared_articles: list[PreparedArticle]
+    candidate_clusters: list[list[PreparedArticle]]
+    rejections: list[AnalysisRejection]
+    topic_entries: list[TopicAnalysisEntry]
+    notes: list[str] = field(default_factory=list)
+    ollama_error: str | None = None
+    shared_topics_generated: int = 0
+    unique_topics_generated: int = 0
+    rejected_unique_candidates: int = 0
+    total_unique_candidate_articles: int = 0
+
+
+@dataclass(slots=True)
+class SourceAnalysisRules:
+    reject_url_substrings: tuple[str, ...] = ()
+    reject_url_patterns: tuple[re.Pattern[str], ...] = ()
+    reject_title_terms: tuple[str, ...] = ()
+    reject_title_patterns: tuple[re.Pattern[str], ...] = ()
+    evergreen_title_terms: tuple[str, ...] = ()
+    force_story_subtype_by_title_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    force_story_subtype_by_url_terms: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    allow_unique_without_published_at: bool = False
+
+
+VALID_STORY_SUBTYPES_BY_CATEGORY = {
+    "sports": {"matchup", "schedule", "odds", "admin", "update"},
+    "business": {"market", "general"},
+}
+QUALITY_SCORE_BANDS = (
+    ("0.90-1.00", 0.90, 1.01),
+    ("0.75-0.89", 0.75, 0.90),
+    ("0.60-0.74", 0.60, 0.75),
+    ("0.40-0.59", 0.40, 0.60),
+    ("0.00-0.39", 0.00, 0.40),
+)
 
 
 def utcnow() -> datetime:
@@ -339,8 +464,27 @@ def split_sentences(value: str) -> list[str]:
     compacted = compact_text(value)
     if not compacted:
         return []
-    parts = re.split(r"(?<=[.!?])\s+", compacted)
-    return [compact_text(part) for part in parts if compact_text(part)]
+    protected = compacted
+    placeholder_map: dict[str, str] = {}
+    for index, abbreviation in enumerate(SENTENCE_PROTECTED_ABBREVIATIONS):
+        placeholder = f"__abbr_{index}__"
+        pattern = re.compile(rf"\b{re.escape(abbreviation)}", re.IGNORECASE)
+        def _replace_abbreviation(match: re.Match[str], *, token: str = placeholder) -> str:
+            placeholder_map[token] = match.group(0)
+            return token
+
+        protected = pattern.sub(_replace_abbreviation, protected)
+
+    parts = re.split(r"(?<=[.!?])\s+", protected)
+    restored = []
+    for part in parts:
+        normalized = part
+        for placeholder, original in placeholder_map.items():
+            normalized = normalized.replace(placeholder, original)
+        normalized = compact_text(normalized)
+        if normalized:
+            restored.append(normalized)
+    return restored
 
 
 def remove_source_labels(value: str, source_names: list[str]) -> str:
@@ -396,14 +540,124 @@ def clean_viewer_points(
     return dedupe_preserve_order(cleaned)[:max_items]
 
 
-def make_rejection(reason: str, *, stage: str, title: str, url: str) -> AnalysisRejection:
+def make_rejection(
+    reason: str,
+    *,
+    stage: str,
+    title: str,
+    url: str,
+    source_slug: str,
+    source_name: str,
+) -> AnalysisRejection:
     normalized_reason = reason if reason in VALID_REJECTION_REASONS else "low_signal_unique"
     return AnalysisRejection(
         reason=normalized_reason,
         stage=stage,
         title=compact_text(title),
         url=compact_text(url),
+        source_slug=compact_text(source_slug) or "unknown",
+        source_name=compact_text(source_name) or "Unknown Source",
     )
+
+
+def normalize_rule_terms(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    normalized = [compact_text(str(item)).lower() for item in value if compact_text(str(item))]
+    return tuple(dict.fromkeys(normalized))
+
+
+def normalize_rule_patterns(value: Any) -> tuple[re.Pattern[str], ...]:
+    if not isinstance(value, list):
+        return ()
+    patterns: list[re.Pattern[str]] = []
+    for item in value:
+        pattern_text = compact_text(str(item))
+        if not pattern_text:
+            continue
+        try:
+            patterns.append(re.compile(pattern_text, re.IGNORECASE))
+        except re.error:
+            continue
+    return tuple(patterns)
+
+
+def normalize_forced_subtype_terms(value: Any) -> dict[str, tuple[str, ...]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, tuple[str, ...]] = {}
+    valid_subtypes = {subtype for subtypes in VALID_STORY_SUBTYPES_BY_CATEGORY.values() for subtype in subtypes}
+    for subtype, terms in value.items():
+        normalized_subtype = compact_text(str(subtype)).lower()
+        if normalized_subtype not in valid_subtypes:
+            continue
+        normalized_terms = normalize_rule_terms(terms)
+        if normalized_terms:
+            normalized[normalized_subtype] = normalized_terms
+    return normalized
+
+
+def parse_source_analysis_rules(source: Source | None) -> SourceAnalysisRules:
+    config = source.config if source and isinstance(source.config, dict) else {}
+    raw_rules = config.get("analysis_rules")
+    if not isinstance(raw_rules, dict):
+        return SourceAnalysisRules()
+
+    return SourceAnalysisRules(
+        reject_url_substrings=normalize_rule_terms(raw_rules.get("reject_url_substrings")),
+        reject_url_patterns=normalize_rule_patterns(raw_rules.get("reject_url_regexes")),
+        reject_title_terms=normalize_rule_terms(raw_rules.get("reject_title_terms")),
+        reject_title_patterns=normalize_rule_patterns(raw_rules.get("reject_title_regexes")),
+        evergreen_title_terms=normalize_rule_terms(raw_rules.get("evergreen_title_terms")),
+        force_story_subtype_by_title_terms=normalize_forced_subtype_terms(
+            raw_rules.get("force_story_subtype_by_title_terms")
+        ),
+        force_story_subtype_by_url_terms=normalize_forced_subtype_terms(
+            raw_rules.get("force_story_subtype_by_url_terms")
+        ),
+        allow_unique_without_published_at=bool(raw_rules.get("allow_unique_without_published_at", False)),
+    )
+
+
+def cluster_analysis_rules(cluster: list[PreparedArticle]) -> SourceAnalysisRules:
+    if not cluster:
+        return SourceAnalysisRules()
+    source_slugs = {item.source_slug for item in cluster}
+    if len(source_slugs) != 1:
+        return SourceAnalysisRules()
+    article_source = cluster[0].article.source if hasattr(cluster[0].article, "source") else None
+    return parse_source_analysis_rules(article_source)
+
+
+def match_rule_terms(value: str, terms: tuple[str, ...]) -> bool:
+    lowered = compact_text(value).lower()
+    return any(term in lowered for term in terms)
+
+
+def match_rule_patterns(value: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    return any(pattern.search(value) for pattern in patterns)
+
+
+def forced_story_subtype(
+    *,
+    category: str,
+    headline: str,
+    url: str,
+    rules: SourceAnalysisRules | None,
+) -> str | None:
+    if not rules:
+        return None
+    allowed_subtypes = VALID_STORY_SUBTYPES_BY_CATEGORY.get(category, {"general"})
+    lowered_headline = compact_text(headline)
+    lowered_url = compact_text(url)
+
+    for subtype, terms in rules.force_story_subtype_by_title_terms.items():
+        if subtype in allowed_subtypes and match_rule_terms(lowered_headline, terms):
+            return subtype
+    for subtype, terms in rules.force_story_subtype_by_url_terms.items():
+        if subtype in allowed_subtypes and match_rule_terms(lowered_url, terms):
+            return subtype
+    return None
 
 
 def has_html_artifact(value: str | None) -> bool:
@@ -514,10 +768,21 @@ def infer_story_subtype(
     *,
     category: str,
     headline: str,
+    url: str = "",
     summary: str,
     key_points: list[str],
     comparison_story: bool,
+    rules: SourceAnalysisRules | None = None,
 ) -> str:
+    forced_subtype = forced_story_subtype(
+        category=category,
+        headline=headline,
+        url=url,
+        rules=rules,
+    )
+    if forced_subtype:
+        return forced_subtype
+
     combined = compact_text(" ".join([headline, summary, *key_points]))
     if category == "sports":
         if SPORTS_ODDS_SIGNAL_RE.search(combined):
@@ -536,26 +801,42 @@ def infer_story_subtype(
     return "general"
 
 
-def article_eligibility_reason(article: Article, *, timestamp: datetime) -> str | None:
+def article_eligibility_reason(
+    article: Article,
+    *,
+    timestamp: datetime,
+    rules: SourceAnalysisRules | None = None,
+) -> str | None:
     raw_title = article.title or ""
     raw_summary = article.summary or article.content_snippet or ""
     clean_title = compact_text(raw_title)
     clean_summary = compact_text(raw_summary)
+    source_rules = rules or SourceAnalysisRules()
 
     if url_has_non_news_segment(article.url):
         last_segment = last_path_segment(article.url)
         if last_segment in {"video", "videos", "watch"}:
             return "non_news_url"
         return "utility_or_hub_page"
+    if match_rule_terms(article.url, source_rules.reject_url_substrings) or match_rule_patterns(article.url, source_rules.reject_url_patterns):
+        return "utility_or_hub_page"
+    if match_rule_terms(clean_title, source_rules.reject_title_terms) or match_rule_patterns(clean_title, source_rules.reject_title_patterns):
+        return "utility_or_hub_page"
     if is_utility_title(clean_title):
         return "utility_or_hub_page"
     if looks_broken_title(clean_title):
         return "broken_title"
+    if match_rule_terms(clean_title, source_rules.evergreen_title_terms):
+        return "stale_or_evergreen"
     if has_stale_year_signal(clean_title, timestamp):
         return "stale_or_evergreen"
     if has_html_artifact(raw_title) and looks_broken_title(clean_title):
         return "html_artifact"
-    if not article.published_at and (not looks_news_like_url(article.url) or not has_minimum_story_signal(clean_title, clean_summary or clean_title)):
+    if (
+        not article.published_at
+        and not source_rules.allow_unique_without_published_at
+        and (not looks_news_like_url(article.url) or not has_minimum_story_signal(clean_title, clean_summary or clean_title))
+    ):
         return "stale_or_evergreen"
     return None
 
@@ -573,14 +854,23 @@ def unique_candidate_rejection_reason(cluster: list[PreparedArticle]) -> str | N
     headline = min(titles, key=len) if titles else compact_text(representative.title)
     summary = " ".join([value for value in summaries if value][:2]) or headline
     category = cluster[0].normalized_category
+    source_rules = cluster_analysis_rules(cluster)
 
     if not looks_news_like_url(representative.url):
         return "non_news_url"
+    if match_rule_terms(representative.url, source_rules.reject_url_substrings) or match_rule_patterns(representative.url, source_rules.reject_url_patterns):
+        return "utility_or_hub_page"
+    if match_rule_terms(headline, source_rules.reject_title_terms) or match_rule_patterns(headline, source_rules.reject_title_patterns):
+        return "utility_or_hub_page"
     if is_utility_title(headline):
         return "utility_or_hub_page"
     if looks_broken_title(headline):
         return "broken_title"
+    if match_rule_terms(headline, source_rules.evergreen_title_terms):
+        return "stale_or_evergreen"
     if has_stale_year_signal(headline, cluster[0].timestamp):
+        return "stale_or_evergreen"
+    if not representative.published_at and not source_rules.allow_unique_without_published_at:
         return "stale_or_evergreen"
     if any(has_html_artifact(item.article.title) or has_html_artifact(item.article.summary) for item in cluster) and not has_minimum_story_signal(headline, summary):
         return "html_artifact"
@@ -590,6 +880,7 @@ def unique_candidate_rejection_reason(cluster: list[PreparedArticle]) -> str | N
     subtype = infer_story_subtype(
         category=category,
         headline=headline,
+        url=representative.url,
         summary=summary,
         key_points=titles[:2],
         comparison_story=is_comparison_story(
@@ -599,6 +890,7 @@ def unique_candidate_rejection_reason(cluster: list[PreparedArticle]) -> str | N
             key_points=titles[:2],
             score=extract_score([headline, summary, *titles[:2]]),
         ),
+        rules=source_rules,
     )
     if category == "sports" and subtype == "matchup" and not extract_score([headline, summary, *titles[:2]]) and not COMPARISON_SIGNAL_RE.search(summary):
         return "template_mismatch"
@@ -621,6 +913,225 @@ def topic_render_rejection_reason(
     if aggregation_type == "unique" and not has_minimum_story_signal(clean_headline, clean_summary or " ".join(key_points)):
         return "low_signal_unique"
     return None
+
+
+def is_truncated_headline(value: str) -> bool:
+    return compact_text(value).endswith("...")
+
+
+def has_thin_summary(value: str) -> bool:
+    cleaned = compact_text(value)
+    summary_tokens = tokenize(cleaned, max_tokens=80)
+    return len(cleaned) < 45 or len(summary_tokens) < 8
+
+
+def evaluate_topic_quality(
+    topic: TopicBrief,
+    *,
+    degraded_generation: bool = False,
+) -> tuple[str, tuple[str, ...]]:
+    review_reasons: list[str] = []
+    representative = topic.representative_articles[0] if topic.representative_articles else None
+    headline_truncated = is_truncated_headline(topic.headline_tr)
+    missing_visual_asset = not topic.visual_assets
+    thin_summary = has_thin_summary(topic.summary_tr)
+
+    if topic.aggregation_type == "unique" and topic.source_count == 1:
+        strong_unique_publishable = (
+            representative is not None
+            and representative.published_at is not None
+            and not headline_truncated
+            and not missing_visual_asset
+            and not thin_summary
+        )
+        if not strong_unique_publishable:
+            review_reasons.append("single_source_topic")
+
+    if headline_truncated:
+        review_reasons.append("truncated_headline")
+    if missing_visual_asset:
+        review_reasons.append("missing_visual_asset")
+    if thin_summary:
+        review_reasons.append("thin_summary")
+    if degraded_generation:
+        review_reasons.append("degraded_generation")
+
+    deduped_reasons = tuple(
+        reason
+        for reason in dict.fromkeys(review_reasons)
+        if reason in VALID_REVIEW_REASONS
+    )
+    return ("review", deduped_reasons) if deduped_reasons else ("publishable", ())
+
+
+def round_quality_score(value: float) -> float:
+    return round(max(0.0, min(1.0, value)), 3)
+
+
+def topic_score_features(
+    topic: TopicBrief,
+    *,
+    quality_status: str,
+    degraded_generation: bool = False,
+) -> dict[str, bool]:
+    representative = topic.representative_articles[0] if topic.representative_articles else None
+    headline_truncated = is_truncated_headline(topic.headline_tr)
+    missing_visual_asset = not topic.visual_assets
+    thin_summary = has_thin_summary(topic.summary_tr)
+
+    return {
+        "shared_topic": topic.aggregation_type == "shared",
+        "unique_topic": topic.aggregation_type == "unique",
+        "source_count_ge_2": topic.source_count >= 2,
+        "source_count_ge_3": topic.source_count >= 3,
+        "has_visual_asset": not missing_visual_asset,
+        "missing_visual_asset": missing_visual_asset,
+        "non_thin_summary": not thin_summary,
+        "thin_summary": thin_summary,
+        "non_truncated_headline": not headline_truncated,
+        "truncated_headline": headline_truncated,
+        "has_published_at": representative is not None and representative.published_at is not None,
+        "missing_published_at": representative is None or representative.published_at is None,
+        "article_count_ge_2": topic.article_count >= 2,
+        "degraded_generation": degraded_generation,
+        "review_status": quality_status == "review",
+    }
+
+
+def calculate_topic_quality_score(
+    score_features: dict[str, bool],
+) -> float:
+    score = QUALITY_SCORE_WEIGHTS["base"]
+    for feature in QUALITY_SCORE_FEATURES:
+        if score_features.get(feature):
+            score += QUALITY_SCORE_WEIGHTS[feature]
+    return round_quality_score(score)
+
+
+def average_quality_score(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return round_quality_score(sum(values) / len(values))
+
+
+def build_score_distribution(values: list[float]) -> list[TopicQualityScoreBand]:
+    return [
+        TopicQualityScoreBand(
+            label=label,
+            count=sum(1 for value in values if lower_bound <= value < upper_bound),
+        )
+        for label, lower_bound, upper_bound in QUALITY_SCORE_BANDS
+    ]
+
+
+def normalize_score_features(raw_features: dict[str, Any] | None) -> dict[str, bool]:
+    raw_features = raw_features or {}
+    return {
+        feature: bool(raw_features.get(feature, False))
+        for feature in QUALITY_SCORE_FEATURES
+    }
+
+
+def topic_feedback_score_features(snapshot: TopicFeedbackSnapshotInput) -> dict[str, bool]:
+    headline_truncated = is_truncated_headline(snapshot.headline_tr)
+    thin_summary = has_thin_summary(snapshot.summary_tr)
+    degraded_generation = "degraded_generation" in snapshot.review_reasons
+
+    return normalize_score_features(
+        {
+            "shared_topic": snapshot.aggregation_type == "shared",
+            "unique_topic": snapshot.aggregation_type == "unique",
+            "source_count_ge_2": snapshot.source_count >= 2,
+            "source_count_ge_3": snapshot.source_count >= 3,
+            "has_visual_asset": snapshot.has_visual_asset,
+            "missing_visual_asset": not snapshot.has_visual_asset,
+            "non_thin_summary": not thin_summary,
+            "thin_summary": thin_summary,
+            "non_truncated_headline": not headline_truncated,
+            "truncated_headline": headline_truncated,
+            "has_published_at": snapshot.has_published_at,
+            "missing_published_at": not snapshot.has_published_at,
+            "article_count_ge_2": snapshot.article_count >= 2,
+            "degraded_generation": degraded_generation,
+            "review_status": snapshot.quality_status == "review",
+        }
+    )
+
+
+def build_latest_feedback(record: TopicFeedback) -> TopicLatestFeedback:
+    return TopicLatestFeedback(
+        label=record.feedback_label,
+        note=record.note,
+        updated_at=record.updated_at,
+    )
+
+
+def feedback_breakdown(records: list[TopicFeedback]) -> list[AnalysisFeedbackDebug]:
+    counts: dict[str, int] = defaultdict(int)
+    for record in records:
+        counts[record.feedback_label] += 1
+    return [
+        AnalysisFeedbackDebug(label=label, count=count)
+        for label, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if label in VALID_FEEDBACK_LABELS
+    ]
+
+
+def feedback_coverage_percent(*, feedback_count: int, topic_count: int) -> float:
+    if topic_count <= 0:
+        return 0.0
+    return round(min(100.0, max(0.0, (feedback_count / topic_count) * 100.0)), 2)
+
+
+async def get_topic_feedback_records(
+    db: AsyncSession,
+    topic_ids: list[str],
+) -> dict[str, TopicFeedback]:
+    unique_ids = [topic_id for topic_id in dict.fromkeys(topic_ids) if compact_text(topic_id)]
+    if not unique_ids:
+        return {}
+    rows = await db.execute(
+        select(TopicFeedback).where(TopicFeedback.topic_id.in_(unique_ids))
+    )
+    return {record.topic_id: record for record in rows.scalars().all()}
+
+
+async def hydrate_topics_with_feedback(
+    db: AsyncSession,
+    topics: list[TopicBrief],
+) -> tuple[list[TopicBrief], dict[str, TopicFeedback]]:
+    feedback_map = await get_topic_feedback_records(db, [topic.topic_id for topic in topics])
+    hydrated_topics = [
+        topic.model_copy(
+            update={
+                "latest_feedback": build_latest_feedback(feedback_map[topic.topic_id])
+                if topic.topic_id in feedback_map
+                else None
+            }
+        )
+        for topic in topics
+    ]
+    return hydrated_topics, feedback_map
+
+
+def approved_feedback(record: TopicFeedback) -> bool:
+    return record.feedback_label == "approved"
+
+
+def negative_feedback(record: TopicFeedback) -> bool:
+    return record.feedback_label in {"wrong", "boring", "malformed"}
+
+
+def tuning_weight_delta(lift: float) -> float:
+    if lift >= 0.20:
+        return 0.03
+    if lift >= 0.10:
+        return 0.02
+    if lift <= -0.20:
+        return -0.03
+    if lift <= -0.10:
+        return -0.02
+    return 0.0
 
 
 def build_why_it_matters_line(category: str) -> str:
@@ -976,6 +1487,7 @@ async def get_recent_articles_for_analysis(
         .join(Source)
         .where(timestamp_expr >= window_start)
     )
+    ranked_articles = apply_article_visibility_filters(ranked_articles)
 
     if source_category:
         ranked_articles = ranked_articles.where(Article.source_category == source_category)
@@ -1070,13 +1582,20 @@ async def _build_prepared_article(
         return None
 
     timestamp = get_article_timestamp(article)
-    rejection_reason = article_eligibility_reason(article, timestamp=timestamp)
+    source_rules = parse_source_analysis_rules(article.source if hasattr(article, "source") else None)
+    rejection_reason = article_eligibility_reason(
+        article,
+        timestamp=timestamp,
+        rules=source_rules,
+    )
     if rejection_reason:
         return make_rejection(
             rejection_reason,
             stage="article",
             title=article.title,
             url=article.url,
+            source_slug=article.source.slug if article.source else "unknown",
+            source_name=article.source.name if article.source else "Unknown Source",
         )
 
     base_text = compact_text(article.summary) or compact_text(article.content_snippet)
@@ -1390,6 +1909,8 @@ def build_contextual_prompt_parts(
     top_key_point = entities["top_key_point"] or truncate_for_prompt(summary, 96)
     supporting_key_points = entities["supporting_key_points"]
     focus_names = entities["names"]
+    source_rules = cluster_analysis_rules(cluster)
+    representative_url = cluster[0].article.url if cluster else ""
     comparison_story = is_comparison_story(
         category=category,
         headline=headline,
@@ -1400,9 +1921,11 @@ def build_contextual_prompt_parts(
     story_subtype = infer_story_subtype(
         category=category,
         headline=headline,
+        url=representative_url,
         summary=summary,
         key_points=key_points,
         comparison_story=comparison_story,
+        rules=source_rules,
     )
     duration_seconds = suggest_duration_seconds(category, key_points, summary)
     if category == "sports":
@@ -1463,7 +1986,7 @@ def build_contextual_prompt_parts(
             elif story_subtype == "admin":
                 story_angle = (
                     f"Tell {truncate_for_prompt(headline, 76)} as an off-field sports development centered on {focal_phrase}, "
-                    "with editorial clarity instead of scoreboard energy."
+                    "with editorial clarity and consequence, not game-highlight energy."
                 )
             else:
                 story_angle = (
@@ -1931,6 +2454,8 @@ def build_fallback_video_plan(
         max_sentences=1,
         max_chars=120,
     ) or build_why_it_matters_line(category)
+    source_rules = cluster_analysis_rules(cluster)
+    representative_url = cluster[0].article.url if cluster else ""
     key_figures = entities["names"][:4]
     key_data = entities["score"] or entities["numeric_phrase"] or ""
     comparison_story = is_comparison_story(
@@ -1943,9 +2468,11 @@ def build_fallback_video_plan(
     story_subtype = infer_story_subtype(
         category=category,
         headline=clean_headline,
+        url=representative_url,
         summary=clean_summary or summary,
         key_points=clean_points,
         comparison_story=comparison_story,
+        rules=source_rules,
     )
     comparison_story = story_subtype == "matchup"
     duration_seconds = clamp_video_duration(prompt_parts.duration_seconds)
@@ -2132,6 +2659,8 @@ def coerce_video_plan(
     scene_candidates: list[VideoPlanScene] = []
     source_names = unique_source_names(cluster)
     valid_asset_ids = {asset.asset_id for asset in visual_assets}
+    source_rules = cluster_analysis_rules(cluster)
+    representative_url = cluster[0].article.url if cluster else ""
     comparison_story = is_comparison_story(
         category=category,
         headline=headline,
@@ -2143,9 +2672,11 @@ def coerce_video_plan(
         infer_story_subtype(
             category=category,
             headline=headline,
+            url=representative_url,
             summary=summary,
             key_points=key_points,
             comparison_story=comparison_story,
+            rules=source_rules,
         )
         == "matchup"
     )
@@ -2461,7 +2992,7 @@ def build_fallback_topic(
         summary=topic.summary_tr,
         key_points=topic.key_points_tr,
     ):
-        return fallback_topic
+        return None
     return topic
 
 
@@ -2486,6 +3017,16 @@ def unique_source_names(cluster: list[PreparedArticle]) -> list[str]:
             seen.add(item.source_slug)
             names.append(item.source_name)
     return names
+
+
+def unique_source_slugs(cluster: list[PreparedArticle]) -> list[str]:
+    seen: set[str] = set()
+    slugs: list[str] = []
+    for item in cluster:
+        if item.source_slug not in seen:
+            seen.add(item.source_slug)
+            slugs.append(item.source_slug)
+    return slugs
 
 
 def partition_clusters(
@@ -2535,6 +3076,7 @@ def build_analysis_debug(
     articles: list[Article],
     prepared_articles: list[PreparedArticle],
     candidate_clusters: list[list[PreparedArticle]],
+    topic_entries: list[TopicAnalysisEntry] | None = None,
     rejections: list[AnalysisRejection] | None = None,
     notes: list[str] | None = None,
     ollama_error: str | None = None,
@@ -2576,6 +3118,17 @@ def build_analysis_debug(
     rejection_counts: dict[str, int] = defaultdict(int)
     for rejection in rejections or []:
         rejection_counts[rejection.reason] += 1
+    review_counts: dict[str, int] = defaultdict(int)
+    for entry in topic_entries or []:
+        for reason in entry.review_reasons:
+            review_counts[reason] += 1
+
+    publishable_topics_generated = sum(
+        1 for entry in (topic_entries or []) if entry.quality_status == "publishable"
+    )
+    review_topics_generated = sum(
+        1 for entry in (topic_entries or []) if entry.quality_status == "review"
+    )
 
     return AnalysisDebug(
         fetched_articles=len(articles),
@@ -2586,6 +3139,8 @@ def build_analysis_debug(
         single_source_clusters=single_source_clusters,
         shared_topics_generated=shared_topics_generated,
         unique_topics_generated=unique_topics_generated,
+        publishable_topics_generated=publishable_topics_generated,
+        review_topics_generated=review_topics_generated,
         rejected_unique_candidates=rejected_unique_candidates,
         dropped_unique_articles=dropped_unique_articles,
         source_breakdown=source_breakdown,
@@ -2593,6 +3148,10 @@ def build_analysis_debug(
         rejection_breakdown=[
             AnalysisRejectionDebug(reason=reason, count=count)
             for reason, count in sorted(rejection_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        review_breakdown=[
+            AnalysisReviewDebug(reason=reason, count=count)
+            for reason, count in sorted(review_counts.items(), key=lambda item: (-item[1], item[0]))
         ],
         notes=notes or [],
         ollama_base_url=settings.OLLAMA_BASE_URL,
@@ -2775,29 +3334,553 @@ def build_topic_from_llm_payload(
     )
 
 
+def topic_sort_key(topic: TopicBrief) -> tuple[int, datetime, int, float, int]:
+    latest_published_at = max(
+        (article.published_at or datetime.min) for article in topic.representative_articles
+    ) if topic.representative_articles else datetime.min
+    return (
+        1 if topic.aggregation_type == "shared" else 0,
+        latest_published_at,
+        topic.article_count,
+        topic.confidence,
+        topic.source_count,
+    )
+
+
 def sort_topics(topics: list[TopicBrief]) -> list[TopicBrief]:
     return sorted(
         topics,
-        key=lambda topic: (
-            1 if topic.aggregation_type == "shared" else 0,
-            max((article.published_at or datetime.min) for article in topic.representative_articles),
-            topic.article_count,
-            topic.confidence,
-            topic.source_count,
+        key=lambda topic: (topic.quality_score,) + topic_sort_key(topic),
+        reverse=True,
+    )
+
+
+def make_topic_analysis_entry(
+    topic: TopicBrief,
+    *,
+    degraded_generation: bool = False,
+) -> TopicAnalysisEntry:
+    quality_status, review_reasons = evaluate_topic_quality(
+        topic,
+        degraded_generation=degraded_generation,
+    )
+    score_features = topic_score_features(
+        topic,
+        quality_status=quality_status,
+        degraded_generation=degraded_generation,
+    )
+    quality_score = calculate_topic_quality_score(score_features)
+    seen_sources: set[str] = set()
+    source_pairs: list[tuple[str, str]] = []
+    for article in topic.representative_articles:
+        slug = article.source_slug or "unknown"
+        name = article.source_name or "Unknown Source"
+        if slug in seen_sources:
+            continue
+        seen_sources.add(slug)
+        source_pairs.append((slug, name))
+
+    return TopicAnalysisEntry(
+        topic=topic.model_copy(
+            update={
+                "quality_status": quality_status,
+                "quality_score": quality_score,
+                "review_reasons": list(review_reasons),
+            }
+        ),
+        quality_status=quality_status,
+        quality_score=quality_score,
+        score_features=score_features,
+        review_reasons=review_reasons,
+        source_slugs=tuple(slug for slug, _ in source_pairs),
+        source_names=tuple(name for _, name in source_pairs),
+        degraded_generation=degraded_generation,
+    )
+
+
+def sort_topic_entries(
+    entries: list[TopicAnalysisEntry],
+    *,
+    include_review: bool,
+) -> list[TopicAnalysisEntry]:
+    filtered_entries = [
+        entry for entry in entries if include_review or entry.quality_status == "publishable"
+    ]
+    return sorted(
+        filtered_entries,
+        key=lambda entry: (
+            1 if entry.quality_status == "publishable" else 0,
+            entry.quality_score,
+        ) + topic_sort_key(entry.topic),
+        reverse=True,
+    )
+
+
+def build_topic_groups(topic_entries: list[TopicAnalysisEntry]) -> list[TopicGroup]:
+    groups_by_category: dict[str, list[TopicAnalysisEntry]] = defaultdict(list)
+    for entry in topic_entries:
+        groups_by_category[entry.topic.category].append(entry)
+
+    groups = [
+        TopicGroup(category=group_category, topics=[entry.topic for entry in group_entries])
+        for group_category, group_entries in groups_by_category.items()
+    ]
+    groups.sort(
+        key=lambda group: (
+            max((topic.quality_score for topic in group.topics), default=0.0),
+            len(group.topics),
+        ),
+        reverse=True,
+    )
+    return groups
+
+
+def build_topic_quality_totals(
+    result: TopicAnalysisRunResult,
+    *,
+    feedback_records: dict[str, TopicFeedback] | None = None,
+) -> TopicQualityTotals:
+    rejection_counts: dict[str, int] = defaultdict(int)
+    review_counts: dict[str, int] = defaultdict(int)
+    feedback_items = list((feedback_records or {}).values())
+    for rejection in result.rejections:
+        rejection_counts[rejection.reason] += 1
+    for entry in result.topic_entries:
+        for reason in entry.review_reasons:
+            review_counts[reason] += 1
+    all_scores = [entry.quality_score for entry in result.topic_entries]
+    publishable_scores = [entry.quality_score for entry in result.topic_entries if entry.quality_status == "publishable"]
+    review_scores = [entry.quality_score for entry in result.topic_entries if entry.quality_status == "review"]
+
+    return TopicQualityTotals(
+        fetched_articles=len(result.articles),
+        prepared_articles=len(result.prepared_articles),
+        rejected_articles=sum(1 for rejection in result.rejections if rejection.stage == "article"),
+        candidate_clusters=len(result.candidate_clusters),
+        publishable_topics=sum(1 for entry in result.topic_entries if entry.quality_status == "publishable"),
+        review_topics=sum(1 for entry in result.topic_entries if entry.quality_status == "review"),
+        rejected_topics=sum(1 for rejection in result.rejections if rejection.stage != "article"),
+        shared_topics=sum(1 for entry in result.topic_entries if entry.topic.aggregation_type == "shared"),
+        unique_topics=sum(1 for entry in result.topic_entries if entry.topic.aggregation_type == "unique"),
+        avg_quality_score=average_quality_score(all_scores),
+        publishable_avg_quality_score=average_quality_score(publishable_scores),
+        review_avg_quality_score=average_quality_score(review_scores),
+        feedback_count=len(feedback_items),
+        feedback_coverage_percent=feedback_coverage_percent(
+            feedback_count=len(feedback_items),
+            topic_count=len(result.topic_entries),
+        ),
+        score_distribution=build_score_distribution(all_scores),
+        rejection_breakdown=[
+            AnalysisRejectionDebug(reason=reason, count=count)
+            for reason, count in sorted(rejection_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        review_breakdown=[
+            AnalysisReviewDebug(reason=reason, count=count)
+            for reason, count in sorted(review_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        feedback_breakdown=feedback_breakdown(feedback_items),
+    )
+
+
+def build_source_quality_reports(result: TopicAnalysisRunResult) -> list[TopicQualitySourceReport]:
+    source_data: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def ensure_source(slug: str, name: str) -> dict[str, Any]:
+        key = (slug, name)
+        if key not in source_data:
+            source_data[key] = {
+                "article_count": 0,
+                "prepared_article_count": 0,
+                "rejected_article_count": 0,
+                "topic_contributions": 0,
+                "publishable_contributions": 0,
+                "review_contributions": 0,
+                "shared_contributions": 0,
+                "unique_contributions": 0,
+                "score_values": [],
+                "publishable_score_values": [],
+                "review_score_values": [],
+                "rejection_counts": defaultdict(int),
+                "review_counts": defaultdict(int),
+                "sample_rejections": [],
+                "sample_review_topics": [],
+                "lowest_scoring_topics": [],
+            }
+        return source_data[key]
+
+    for article in result.articles:
+        source = article.source
+        slug = source.slug if source else "unknown"
+        name = source.name if source else "Unknown Source"
+        ensure_source(slug, name)["article_count"] += 1
+
+    for prepared in result.prepared_articles:
+        ensure_source(prepared.source_slug, prepared.source_name)["prepared_article_count"] += 1
+
+    for rejection in result.rejections:
+        bucket = ensure_source(rejection.source_slug, rejection.source_name)
+        if rejection.stage == "article":
+            bucket["rejected_article_count"] += 1
+        bucket["rejection_counts"][rejection.reason] += 1
+        if len(bucket["sample_rejections"]) < 3:
+            bucket["sample_rejections"].append(
+                TopicQualitySampleRejection(title=rejection.title, reason=rejection.reason)
+            )
+
+    for entry in result.topic_entries:
+        source_pairs = list(zip(entry.source_slugs, entry.source_names))
+        for slug, name in source_pairs:
+            bucket = ensure_source(slug, name)
+            bucket["topic_contributions"] += 1
+            if entry.quality_status == "publishable":
+                bucket["publishable_contributions"] += 1
+                bucket["publishable_score_values"].append(entry.quality_score)
+            else:
+                bucket["review_contributions"] += 1
+                bucket["review_score_values"].append(entry.quality_score)
+            if entry.topic.aggregation_type == "shared":
+                bucket["shared_contributions"] += 1
+            else:
+                bucket["unique_contributions"] += 1
+            bucket["score_values"].append(entry.quality_score)
+            for reason in entry.review_reasons:
+                bucket["review_counts"][reason] += 1
+            if entry.quality_status == "review" and len(bucket["sample_review_topics"]) < 3:
+                bucket["sample_review_topics"].append(
+                    TopicQualitySampleReviewTopic(
+                        headline=entry.topic.headline_tr,
+                        reasons=list(entry.review_reasons),
+                    )
+                )
+            bucket["lowest_scoring_topics"].append(
+                TopicQualityScoredTopic(
+                    headline=entry.topic.headline_tr,
+                    quality_status=entry.quality_status,
+                    quality_score=entry.quality_score,
+                )
+            )
+
+    reports = [
+        TopicQualitySourceReport(
+            source_slug=source_slug,
+            source_name=source_name,
+            article_count=bucket["article_count"],
+            prepared_article_count=bucket["prepared_article_count"],
+            rejected_article_count=bucket["rejected_article_count"],
+            topic_contributions=bucket["topic_contributions"],
+            publishable_contributions=bucket["publishable_contributions"],
+            review_contributions=bucket["review_contributions"],
+            shared_contributions=bucket["shared_contributions"],
+            unique_contributions=bucket["unique_contributions"],
+            avg_quality_score=average_quality_score(bucket["score_values"]),
+            publishable_avg_quality_score=average_quality_score(bucket["publishable_score_values"]),
+            review_avg_quality_score=average_quality_score(bucket["review_score_values"]),
+            rejection_breakdown=[
+                AnalysisRejectionDebug(reason=reason, count=count)
+                for reason, count in sorted(bucket["rejection_counts"].items(), key=lambda item: (-item[1], item[0]))
+            ],
+            review_breakdown=[
+                AnalysisReviewDebug(reason=reason, count=count)
+                for reason, count in sorted(bucket["review_counts"].items(), key=lambda item: (-item[1], item[0]))
+            ],
+            sample_rejections=bucket["sample_rejections"],
+            sample_review_topics=bucket["sample_review_topics"],
+            lowest_scoring_topics=sorted(
+                bucket["lowest_scoring_topics"],
+                key=lambda item: (item.quality_score, item.headline.lower()),
+            )[:3],
+        )
+        for (source_slug, source_name), bucket in source_data.items()
+    ]
+    return sorted(
+        reports,
+        key=lambda report: (
+            report.rejected_article_count,
+            report.review_contributions,
+            -report.avg_quality_score,
+            report.article_count,
+            report.source_slug,
         ),
         reverse=True,
     )
 
 
-async def generate_topic_briefs(
+def build_topic_briefs_response(
+    result: TopicAnalysisRunResult,
+    *,
+    topics: list[TopicBrief],
+    limit_topics: int,
+    include_review: bool,
+    include_debug: bool,
+) -> TopicBriefsResponse:
+    sorted_entries = sort_topic_entries(result.topic_entries, include_review=include_review)
+    topic_lookup = {topic.topic_id: topic for topic in topics}
+    limited_entries = sorted_entries[:limit_topics]
+    returned_topics = [topic_lookup.get(entry.topic.topic_id, entry.topic) for entry in limited_entries]
+    returned_unique_articles = sum(
+        topic.article_count
+        for topic in returned_topics
+        if topic.aggregation_type == "unique"
+    )
+    dropped_unique_articles = max(0, result.total_unique_candidate_articles - returned_unique_articles)
+    debug_notes = list(result.notes)
+    review_topic_count = sum(1 for entry in result.topic_entries if entry.quality_status == "review")
+
+    if not include_review and review_topic_count:
+        debug_notes.append(
+            f"{review_topic_count} topic(s) were flagged for review and excluded from the default response."
+        )
+    if not limited_entries and review_topic_count and not include_review:
+        debug_notes.append("Only review topics were produced for this window; pass include_review=true to inspect them.")
+    if dropped_unique_articles:
+        debug_notes.append(
+            f"{dropped_unique_articles} unique article(s) were omitted from the final response after filtering and limit_topics={limit_topics}."
+        )
+
+    return TopicBriefsResponse(
+        analysis_status=result.analysis_status,
+        generated_at=result.window_end,
+        window_start=result.window_start,
+        window_end=result.window_end,
+        groups=build_topic_groups(
+            [
+                entry
+                if entry.topic.topic_id not in topic_lookup
+                else TopicAnalysisEntry(
+                    topic=topic_lookup[entry.topic.topic_id],
+                    quality_status=entry.quality_status,
+                    quality_score=entry.quality_score,
+                    score_features=entry.score_features,
+                    review_reasons=entry.review_reasons,
+                    source_slugs=entry.source_slugs,
+                    source_names=entry.source_names,
+                    degraded_generation=entry.degraded_generation,
+                )
+                for entry in limited_entries
+            ]
+        ),
+        debug=build_analysis_debug(
+            articles=result.articles,
+            prepared_articles=result.prepared_articles,
+            candidate_clusters=result.candidate_clusters,
+            topic_entries=result.topic_entries,
+            rejections=result.rejections,
+            notes=debug_notes,
+            ollama_error=result.ollama_error,
+            shared_topics_generated=result.shared_topics_generated,
+            unique_topics_generated=result.unique_topics_generated,
+            rejected_unique_candidates=result.rejected_unique_candidates,
+            dropped_unique_articles=dropped_unique_articles,
+        )
+        if include_debug
+        else None,
+    )
+
+
+def build_topic_quality_report_response(
+    result: TopicAnalysisRunResult,
+    *,
+    feedback_records: dict[str, TopicFeedback] | None = None,
+) -> TopicQualityReportResponse:
+    return TopicQualityReportResponse(
+        analysis_status=result.analysis_status,
+        generated_at=result.window_end,
+        window_start=result.window_start,
+        window_end=result.window_end,
+        totals=build_topic_quality_totals(result, feedback_records=feedback_records),
+        sources=build_source_quality_reports(result),
+        notes=list(result.notes),
+        ollama_error=result.ollama_error,
+    )
+
+
+async def upsert_topic_feedback(
+    db: AsyncSession,
+    payload: TopicFeedbackUpsertRequest,
+) -> TopicFeedbackResponse:
+    snapshot = payload.topic_snapshot
+    score_features = topic_feedback_score_features(snapshot)
+    note = compact_text(payload.note) or None
+
+    existing = await db.execute(
+        select(TopicFeedback).where(TopicFeedback.topic_id == payload.topic_id)
+    )
+    record = existing.scalar_one_or_none()
+    if record is None:
+        record = TopicFeedback(topic_id=payload.topic_id, feedback_label=payload.feedback_label)
+        db.add(record)
+
+    record.feedback_label = payload.feedback_label
+    record.note = note
+    record.headline_tr = compact_text(snapshot.headline_tr)
+    record.summary_tr = compact_text(snapshot.summary_tr)
+    record.category = snapshot.category
+    record.aggregation_type = snapshot.aggregation_type
+    record.quality_status = snapshot.quality_status
+    record.quality_score = round_quality_score(snapshot.quality_score)
+    record.source_count = snapshot.source_count
+    record.article_count = snapshot.article_count
+    record.source_slugs = [compact_text(slug) for slug in snapshot.source_slugs if compact_text(slug)]
+    record.representative_article_ids = [str(article_id) for article_id in snapshot.representative_article_ids]
+    record.review_reasons = [reason for reason in snapshot.review_reasons if reason in VALID_REVIEW_REASONS]
+    record.score_features = score_features
+
+    await db.flush()
+    await db.refresh(record)
+    return TopicFeedbackResponse(
+        topic_id=payload.topic_id,
+        latest_feedback=build_latest_feedback(record),
+    )
+
+
+async def delete_topic_feedback(
+    db: AsyncSession,
+    topic_id: str,
+) -> TopicFeedbackDeleteResponse:
+    existing = await db.execute(
+        select(TopicFeedback).where(TopicFeedback.topic_id == topic_id)
+    )
+    record = existing.scalar_one_or_none()
+    if record is not None:
+        await db.delete(record)
+        await db.flush()
+    return TopicFeedbackDeleteResponse(topic_id=topic_id, deleted=record is not None)
+
+
+def build_tuning_sample(record: TopicFeedback) -> TopicScoreTuningSample:
+    return TopicScoreTuningSample(
+        topic_id=record.topic_id,
+        headline_tr=record.headline_tr,
+        feedback_label=record.feedback_label,
+        quality_status=record.quality_status,
+        quality_score=round_quality_score(record.quality_score),
+    )
+
+
+async def generate_topic_score_tuning_report(
+    db: AsyncSession,
+    *,
+    days: int = 30,
+    source_category: str | None = None,
+    category: str | None = None,
+) -> TopicScoreTuningReportResponse:
+    generated_at = utcnow()
+    cutoff = generated_at - timedelta(days=days)
+
+    feedback_query = select(TopicFeedback).where(TopicFeedback.updated_at >= cutoff)
+    if category:
+        feedback_query = feedback_query.where(TopicFeedback.category == category)
+    feedback_rows = await db.execute(feedback_query)
+    feedback_records = [record for record in feedback_rows.scalars().all() if record.feedback_label in VALID_FEEDBACK_LABELS]
+
+    if source_category:
+        source_rows = await db.execute(select(Source.slug, Source.category))
+        source_category_map = {
+            compact_text(slug): compact_text(record_category)
+            for slug, record_category in source_rows.all()
+        }
+        feedback_records = [
+            record
+            for record in feedback_records
+            if any(source_category_map.get(compact_text(slug)) == source_category for slug in (record.source_slugs or []))
+        ]
+
+    approved_records = [record for record in feedback_records if approved_feedback(record)]
+    negative_records = [record for record in feedback_records if negative_feedback(record)]
+    eligible = (
+        len(feedback_records) >= TUNING_MIN_FEEDBACK
+        and len(approved_records) >= TUNING_MIN_APPROVED
+        and len(negative_records) >= TUNING_MIN_NEGATIVE
+    )
+
+    recommendations: list[TopicScoreWeightRecommendation] = []
+    notes: list[str] = []
+    if not eligible:
+        notes.append(
+            "Not enough feedback yet for reliable weight recommendations."
+        )
+        notes.append(
+            f"Thresholds: {TUNING_MIN_FEEDBACK}+ total, {TUNING_MIN_APPROVED}+ approved, {TUNING_MIN_NEGATIVE}+ negative."
+        )
+    else:
+        normalized_feature_maps = {
+            record.topic_id: normalize_score_features(record.score_features if isinstance(record.score_features, dict) else None)
+            for record in feedback_records
+        }
+        for feature in QUALITY_SCORE_FEATURES:
+            active_records = [record for record in feedback_records if normalized_feature_maps[record.topic_id].get(feature)]
+            inactive_records = [record for record in feedback_records if not normalized_feature_maps[record.topic_id].get(feature)]
+            if len(active_records) < TUNING_MIN_FEATURE_SUPPORT or len(inactive_records) < TUNING_MIN_FEATURE_SUPPORT:
+                continue
+
+            active_approval_rate = sum(1 for record in active_records if approved_feedback(record)) / len(active_records)
+            inactive_approval_rate = sum(1 for record in inactive_records if approved_feedback(record)) / len(inactive_records)
+            lift = round(active_approval_rate - inactive_approval_rate, 3)
+            delta = tuning_weight_delta(lift)
+            if delta == 0.0:
+                continue
+
+            current_weight = QUALITY_SCORE_WEIGHTS[feature]
+            recommendations.append(
+                TopicScoreWeightRecommendation(
+                    feature=feature,
+                    current_weight=round(current_weight, 3),
+                    recommended_weight=round(current_weight + delta, 3),
+                    delta=round(delta, 3),
+                    active_count=len(active_records),
+                    inactive_count=len(inactive_records),
+                    approval_rate_when_active=round(active_approval_rate, 3),
+                    approval_rate_when_inactive=round(inactive_approval_rate, 3),
+                    lift=lift,
+                )
+            )
+
+        if not recommendations:
+            notes.append("Feedback exists, but no feature crossed the current tuning thresholds.")
+
+    high_score_negative = sorted(
+        [record for record in negative_records if record.quality_score >= HIGH_SCORE_NEGATIVE_THRESHOLD],
+        key=lambda record: (-record.quality_score, record.updated_at),
+    )
+    low_score_approved = sorted(
+        [record for record in approved_records if record.quality_score <= LOW_SCORE_APPROVED_THRESHOLD],
+        key=lambda record: (record.quality_score, record.updated_at),
+    )
+
+    return TopicScoreTuningReportResponse(
+        generated_at=generated_at,
+        days=days,
+        source_category=source_category,
+        category=category,
+        totals=TopicScoreTuningTotals(
+            feedback_count=len(feedback_records),
+            approved_count=len(approved_records),
+            negative_count=len(negative_records),
+            eligible_for_recommendations=eligible,
+            feedback_breakdown=feedback_breakdown(feedback_records),
+        ),
+        current_weights={key: round(value, 3) for key, value in QUALITY_SCORE_WEIGHTS.items()},
+        recommendations=sorted(recommendations, key=lambda item: (-abs(item.delta), item.feature)),
+        calibration_summary=TopicScoreTuningCalibrationSummary(
+            high_score_negative_count=len(high_score_negative),
+            low_score_approved_count=len(low_score_approved),
+        ),
+        mismatch_samples=TopicScoreTuningMismatchSamples(
+            high_score_negative=[build_tuning_sample(record) for record in high_score_negative[:5]],
+            low_score_approved=[build_tuning_sample(record) for record in low_score_approved[:5]],
+        ),
+        notes=notes,
+    )
+
+
+async def run_topic_analysis(
     db: AsyncSession,
     *,
     source_category: str | None = None,
     category: str | None = None,
     hours: int = 1,
-    limit_topics: int = 10,
-    include_debug: bool = False,
-) -> TopicBriefsResponse:
+) -> TopicAnalysisRunResult:
     window_end = utcnow()
     window_start = window_end - timedelta(hours=hours)
     articles = await get_recent_articles_for_analysis(
@@ -2810,62 +3893,48 @@ async def generate_topic_briefs(
     prepared_articles = prepared_result.prepared_articles
     analysis_rejections = list(prepared_result.rejections)
     candidate_clusters = build_candidate_clusters(prepared_articles)
-    debug_notes: list[str] = []
+    analysis_notes = [
+        f"Analysis caps: max {settings.ANALYSIS_MAX_ARTICLES_PER_SOURCE} article(s) per source and {settings.ANALYSIS_MAX_ARTICLES_PER_RUN} article(s) overall."
+    ]
     ollama_error: str | None = None
     shared_topics_generated = 0
     unique_topics_generated = 0
     rejected_unique_candidates = 0
-    dropped_unique_articles = 0
-    if include_debug:
-        debug_notes.append(
-            f"Analysis caps: max {settings.ANALYSIS_MAX_ARTICLES_PER_SOURCE} article(s) per source and {settings.ANALYSIS_MAX_ARTICLES_PER_RUN} article(s) overall."
-        )
 
     if not articles:
-        if not articles:
-            debug_notes.append("No articles matched the requested time window.")
-        return TopicBriefsResponse(
+        analysis_notes.append("No articles matched the requested time window.")
+        return TopicAnalysisRunResult(
             analysis_status="ok",
-            generated_at=window_end,
             window_start=window_start,
             window_end=window_end,
-            groups=[],
-            debug=build_analysis_debug(
-                articles=articles,
-                prepared_articles=prepared_articles,
-                candidate_clusters=candidate_clusters,
-                rejections=analysis_rejections,
-                notes=debug_notes,
-                shared_topics_generated=shared_topics_generated,
-                unique_topics_generated=unique_topics_generated,
-                rejected_unique_candidates=rejected_unique_candidates,
-                dropped_unique_articles=dropped_unique_articles,
-            )
-            if include_debug
-            else None,
+            articles=articles,
+            prepared_articles=prepared_articles,
+            candidate_clusters=candidate_clusters,
+            rejections=analysis_rejections,
+            topic_entries=[],
+            notes=analysis_notes,
+            shared_topics_generated=shared_topics_generated,
+            unique_topics_generated=unique_topics_generated,
+            rejected_unique_candidates=rejected_unique_candidates,
+            total_unique_candidate_articles=0,
         )
 
     if not prepared_articles:
-        debug_notes.append("Articles were fetched, but none survived category or text preparation.")
-        return TopicBriefsResponse(
+        analysis_notes.append("Articles were fetched, but none survived category or text preparation.")
+        return TopicAnalysisRunResult(
             analysis_status="ok",
-            generated_at=window_end,
             window_start=window_start,
             window_end=window_end,
-            groups=[],
-            debug=build_analysis_debug(
-                articles=articles,
-                prepared_articles=prepared_articles,
-                candidate_clusters=candidate_clusters,
-                rejections=analysis_rejections,
-                notes=debug_notes,
-                shared_topics_generated=shared_topics_generated,
-                unique_topics_generated=unique_topics_generated,
-                rejected_unique_candidates=rejected_unique_candidates,
-                dropped_unique_articles=dropped_unique_articles,
-            )
-            if include_debug
-            else None,
+            articles=articles,
+            prepared_articles=prepared_articles,
+            candidate_clusters=candidate_clusters,
+            rejections=analysis_rejections,
+            topic_entries=[],
+            notes=analysis_notes,
+            shared_topics_generated=shared_topics_generated,
+            unique_topics_generated=unique_topics_generated,
+            rejected_unique_candidates=rejected_unique_candidates,
+            total_unique_candidate_articles=0,
         )
 
     shared_clusters, unique_candidate_clusters, singleton_clusters = partition_clusters(
@@ -2873,24 +3942,22 @@ async def generate_topic_briefs(
         candidate_clusters,
     )
     unique_candidate_clusters = unique_candidate_clusters + singleton_clusters
-
-    if include_debug:
-        if shared_clusters:
-            debug_notes.append(f"{len(shared_clusters)} shared candidate cluster(s) qualified for merged topic generation.")
-        if unique_candidate_clusters:
-            debug_notes.append(f"{len(unique_candidate_clusters)} unique cluster(s) qualified for single-topic prompt generation.")
-        if singleton_clusters:
-            debug_notes.append(f"{len(singleton_clusters)} unclustered article(s) were converted into unique prompt candidates.")
+    if shared_clusters:
+        analysis_notes.append(f"{len(shared_clusters)} shared candidate cluster(s) qualified for merged topic generation.")
+    if unique_candidate_clusters:
+        analysis_notes.append(f"{len(unique_candidate_clusters)} unique cluster(s) qualified for single-topic prompt generation.")
+    if singleton_clusters:
+        analysis_notes.append(f"{len(singleton_clusters)} unclustered article(s) were converted into unique prompt candidates.")
 
     llm_analyzer = OllamaTopicAnalyzer()
     asset_resolver = VisualAssetResolver()
     analysis_status = "ok"
     llm_available = True
-    topics: list[TopicBrief] = []
+    topic_entries: list[TopicAnalysisEntry] = []
 
     for cluster in shared_clusters:
         visual_assets = await resolve_visual_assets_for_cluster(cluster, asset_resolver)
-
+        llm_topics: list[dict[str, Any]] = []
         if llm_available:
             try:
                 llm_topics = await llm_analyzer.analyze_cluster(cluster, visual_assets)
@@ -2899,55 +3966,72 @@ async def generate_topic_briefs(
                 llm_available = False
                 analysis_status = "degraded"
                 ollama_error = str(exc)
-                debug_notes.append(f"Ollama analysis failed: {exc}")
+                analysis_notes.append(f"Ollama analysis failed: {exc}")
                 llm_topics = []
-        else:
-            llm_topics = []
 
+        cluster_topics: list[TopicBrief] = []
         if llm_available and llm_topics:
             lookup = {str(item.article.id): item for item in cluster}
             cluster_topics = [
-                build_topic_from_llm_payload(
-                    lookup,
-                    payload,
-                    visual_assets,
-                    aggregation_type="shared",
+                topic
+                for topic in (
+                    build_topic_from_llm_payload(
+                        lookup,
+                        payload,
+                        visual_assets,
+                        aggregation_type="shared",
+                    )
+                    for payload in llm_topics
                 )
-                for payload in llm_topics
+                if topic is not None
             ]
-            cluster_topics = [topic for topic in cluster_topics if topic is not None]
-            if cluster_topics:
-                topics.extend(cluster_topics)
-                shared_topics_generated += len(cluster_topics)
-                continue
-            fallback_topic = build_fallback_topic(cluster, visual_assets, aggregation_type="shared")
-            if fallback_topic:
-                analysis_status = "degraded"
-                topics.append(fallback_topic)
-                shared_topics_generated += 1
-                continue
 
-        if not llm_available:
-            fallback_topic = build_fallback_topic(cluster, visual_assets, aggregation_type="shared")
-            if fallback_topic:
-                topics.append(fallback_topic)
-                shared_topics_generated += 1
+        if cluster_topics:
+            topic_entries.extend(make_topic_analysis_entry(topic) for topic in cluster_topics)
+            shared_topics_generated += len(cluster_topics)
             continue
+
+        fallback_topic = build_fallback_topic(cluster, visual_assets, aggregation_type="shared")
+        if fallback_topic:
+            analysis_status = "degraded"
+            topic_entries.append(
+                make_topic_analysis_entry(
+                    fallback_topic,
+                    degraded_generation=True,
+                )
+            )
+            shared_topics_generated += 1
+            continue
+
+        representative = cluster[0]
+        analysis_rejections.append(
+            make_rejection(
+                "template_mismatch",
+                stage="topic",
+                title=representative.article.title,
+                url=representative.article.url,
+                source_slug=representative.source_slug,
+                source_name=representative.source_name,
+            )
+        )
 
     for cluster in unique_candidate_clusters:
         rejection_reason = unique_candidate_rejection_reason(cluster)
         if rejection_reason:
-            representative = cluster[0].article
+            representative = cluster[0]
             analysis_rejections.append(
                 make_rejection(
                     rejection_reason,
                     stage="unique_candidate",
-                    title=representative.title,
-                    url=representative.url,
+                    title=representative.article.title,
+                    url=representative.article.url,
+                    source_slug=representative.source_slug,
+                    source_name=representative.source_name,
                 )
             )
             rejected_unique_candidates += 1
             continue
+
         visual_assets = await resolve_visual_assets_for_cluster(cluster, asset_resolver)
         unique_topic = build_fallback_topic(
             cluster,
@@ -2955,88 +4039,110 @@ async def generate_topic_briefs(
             aggregation_type="unique",
         )
         if unique_topic:
-            topics.append(unique_topic)
+            topic_entries.append(make_topic_analysis_entry(unique_topic))
             unique_topics_generated += 1
-        else:
-            representative = cluster[0].article
-            analysis_rejections.append(
-                make_rejection(
-                    "low_signal_unique",
-                    stage="unique_candidate",
-                    title=representative.title,
-                    url=representative.url,
-                )
+            continue
+
+        representative = cluster[0]
+        analysis_rejections.append(
+            make_rejection(
+                "low_signal_unique",
+                stage="unique_candidate",
+                title=representative.article.title,
+                url=representative.article.url,
+                source_slug=representative.source_slug,
+                source_name=representative.source_name,
             )
-            rejected_unique_candidates += 1
+        )
+        rejected_unique_candidates += 1
 
-    total_unique_candidate_articles = sum(len(cluster) for cluster in unique_candidate_clusters)
-
-    topics = sort_topics(topics)
-    limited_topics = topics[:limit_topics]
-    returned_unique_articles = sum(
-        topic.article_count
-        for topic in limited_topics
-        if topic.aggregation_type == "unique"
-    )
-    dropped_unique_articles = max(0, total_unique_candidate_articles - returned_unique_articles)
-    topics = limited_topics
-
-    groups_by_category: dict[str, list[TopicBrief]] = defaultdict(list)
-    for topic in topics:
-        groups_by_category[topic.category].append(topic)
-
-    groups = [
-        TopicGroup(category=group_category, topics=sort_topics(group_topics))
-        for group_category, group_topics in groups_by_category.items()
-    ]
-    groups.sort(key=lambda group: len(group.topics), reverse=True)
-
-    if not topics:
+    review_topic_count = sum(1 for entry in topic_entries if entry.quality_status == "review")
+    rejected_articles = sum(1 for rejection in analysis_rejections if rejection.stage == "article")
+    if not topic_entries:
         if unique_candidate_clusters:
-            debug_notes.append("Unique prompt candidates existed, but no unique topics were returned after processing.")
-        if shared_clusters and llm_available:
-            debug_notes.append(
-                "Shared clusters existed, but no shared topics were returned after model parsing."
-            )
+            analysis_notes.append("Unique prompt candidates existed, but no topics survived quality evaluation.")
+        if shared_clusters:
+            analysis_notes.append("Shared clusters existed, but no shared topics were returned after model parsing.")
         if not shared_clusters and not unique_candidate_clusters:
-            debug_notes.append(
-                "Articles were fetched, but no promptable shared or unique topics could be formed."
-            )
+            analysis_notes.append("Articles were fetched, but no promptable shared or unique topics could be formed.")
     else:
         if not shared_topics_generated and unique_topics_generated:
-            debug_notes.append("No shared topics were found, so the response contains only unique prompts.")
-        if dropped_unique_articles:
-            debug_notes.append(
-                f"{dropped_unique_articles} unique article(s) were omitted from the final response after applying limit_topics={limit_topics}."
-            )
+            analysis_notes.append("No shared topics were found, so the result contains only unique prompts.")
         if rejected_unique_candidates:
-            debug_notes.append(
+            analysis_notes.append(
                 f"{rejected_unique_candidates} unique candidate(s) were rejected by quality guardrails before rendering."
             )
-        rejected_articles = sum(1 for rejection in analysis_rejections if rejection.stage == "article")
         if rejected_articles:
-            debug_notes.append(
+            analysis_notes.append(
                 f"{rejected_articles} article(s) were filtered out before clustering because they looked non-news, stale, or malformed."
             )
+        if review_topic_count:
+            analysis_notes.append(
+                f"{review_topic_count} topic(s) were flagged for review before publication."
+            )
 
-    return TopicBriefsResponse(
+    return TopicAnalysisRunResult(
         analysis_status=analysis_status,
-        generated_at=window_end,
         window_start=window_start,
         window_end=window_end,
-        groups=groups,
-        debug=build_analysis_debug(
-            articles=articles,
-            prepared_articles=prepared_articles,
-            candidate_clusters=candidate_clusters,
-            rejections=analysis_rejections,
-            notes=debug_notes,
-            ollama_error=ollama_error,
-            shared_topics_generated=shared_topics_generated,
-            unique_topics_generated=unique_topics_generated,
-            rejected_unique_candidates=rejected_unique_candidates,
-            dropped_unique_articles=dropped_unique_articles,
-        )
-        if include_debug
-        else None,
+        articles=articles,
+        prepared_articles=prepared_articles,
+        candidate_clusters=candidate_clusters,
+        rejections=analysis_rejections,
+        topic_entries=topic_entries,
+        notes=analysis_notes,
+        ollama_error=ollama_error,
+        shared_topics_generated=shared_topics_generated,
+        unique_topics_generated=unique_topics_generated,
+        rejected_unique_candidates=rejected_unique_candidates,
+        total_unique_candidate_articles=sum(len(cluster) for cluster in unique_candidate_clusters),
     )
+
+
+async def generate_topic_briefs(
+    db: AsyncSession,
+    *,
+    source_category: str | None = None,
+    category: str | None = None,
+    hours: int = 1,
+    limit_topics: int = 10,
+    include_review: bool = False,
+    include_debug: bool = False,
+) -> TopicBriefsResponse:
+    result = await run_topic_analysis(
+        db,
+        source_category=source_category,
+        category=category,
+        hours=hours,
+    )
+    hydrated_topics, _ = await hydrate_topics_with_feedback(
+        db,
+        [entry.topic for entry in result.topic_entries],
+    )
+    return build_topic_briefs_response(
+        result,
+        topics=hydrated_topics,
+        limit_topics=limit_topics,
+        include_review=include_review,
+        include_debug=include_debug,
+    )
+
+
+async def generate_topic_quality_report(
+    db: AsyncSession,
+    *,
+    source_category: str | None = None,
+    category: str | None = None,
+    hours: int = 1,
+) -> TopicQualityReportResponse:
+    result = await run_topic_analysis(
+        db,
+        source_category=source_category,
+        category=category,
+        hours=hours,
+    )
+    feedback_records = await get_topic_feedback_records(
+        db,
+        [entry.topic.topic_id for entry in result.topic_entries],
+    )
+    return build_topic_quality_report_response(result, feedback_records=feedback_records)

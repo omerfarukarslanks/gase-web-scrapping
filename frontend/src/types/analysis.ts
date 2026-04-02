@@ -112,6 +112,10 @@ export interface TopicBrief {
   topic_id: string;
   category: string;
   aggregation_type: 'shared' | 'unique';
+  quality_status: 'publishable' | 'review';
+  quality_score: number;
+  review_reasons: string[];
+  latest_feedback: TopicLatestFeedback | null;
   headline_tr: string;
   summary_tr: string;
   key_points_tr: string[];
@@ -134,6 +138,14 @@ export interface TopicGroup {
   topics: TopicBrief[];
 }
 
+export type FeedbackLabel = 'approved' | 'wrong' | 'boring' | 'malformed';
+
+export interface TopicLatestFeedback {
+  label: FeedbackLabel;
+  note: string | null;
+  updated_at: string;
+}
+
 export interface AnalysisSourceDebug {
   source_slug: string;
   source_name: string;
@@ -151,14 +163,20 @@ export interface AnalysisClusterDebug {
 export interface AnalysisDebug {
   fetched_articles: number;
   prepared_articles: number;
+  rejected_articles: number;
   candidate_clusters: number;
   multi_source_clusters: number;
   single_source_clusters: number;
   shared_topics_generated: number;
   unique_topics_generated: number;
+  publishable_topics_generated: number;
+  review_topics_generated: number;
+  rejected_unique_candidates: number;
   dropped_unique_articles: number;
   source_breakdown: AnalysisSourceDebug[];
   cluster_previews: AnalysisClusterDebug[];
+  rejection_breakdown: { reason: string; count: number }[];
+  review_breakdown: { reason: string; count: number }[];
   notes: string[];
   ollama_base_url: string | null;
   ollama_error: string | null;
@@ -178,6 +196,176 @@ export interface TopicBriefFilters {
   category?: string;
   hours?: number;
   limit_topics?: number;
+  include_review?: boolean;
+}
+
+export interface TopicQualitySampleRejection {
+  title: string;
+  reason: string;
+}
+
+export interface TopicQualitySampleReviewTopic {
+  headline: string;
+  reasons: string[];
+}
+
+export interface TopicQualityScoreBand {
+  label: string;
+  count: number;
+}
+
+export interface TopicQualityScoredTopic {
+  headline: string;
+  quality_status: 'publishable' | 'review';
+  quality_score: number;
+}
+
+export interface TopicQualityReasonCount {
+  reason: string;
+  count: number;
+}
+
+export interface TopicFeedbackCount {
+  label: FeedbackLabel;
+  count: number;
+}
+
+export interface TopicQualityTotals {
+  fetched_articles: number;
+  prepared_articles: number;
+  rejected_articles: number;
+  candidate_clusters: number;
+  publishable_topics: number;
+  review_topics: number;
+  rejected_topics: number;
+  shared_topics: number;
+  unique_topics: number;
+  avg_quality_score: number;
+  publishable_avg_quality_score: number;
+  review_avg_quality_score: number;
+  feedback_count: number;
+  feedback_coverage_percent: number;
+  score_distribution: TopicQualityScoreBand[];
+  rejection_breakdown: TopicQualityReasonCount[];
+  review_breakdown: TopicQualityReasonCount[];
+  feedback_breakdown: TopicFeedbackCount[];
+}
+
+export interface TopicQualitySourceReport {
+  source_slug: string;
+  source_name: string;
+  article_count: number;
+  prepared_article_count: number;
+  rejected_article_count: number;
+  topic_contributions: number;
+  publishable_contributions: number;
+  review_contributions: number;
+  shared_contributions: number;
+  unique_contributions: number;
+  avg_quality_score: number;
+  publishable_avg_quality_score: number;
+  review_avg_quality_score: number;
+  rejection_breakdown: TopicQualityReasonCount[];
+  review_breakdown: TopicQualityReasonCount[];
+  sample_rejections: TopicQualitySampleRejection[];
+  sample_review_topics: TopicQualitySampleReviewTopic[];
+  lowest_scoring_topics: TopicQualityScoredTopic[];
+}
+
+export interface TopicQualityReportResponse {
+  analysis_status: 'ok' | 'degraded';
+  generated_at: string;
+  window_start: string;
+  window_end: string;
+  totals: TopicQualityTotals;
+  sources: TopicQualitySourceReport[];
+  notes: string[];
+  ollama_error: string | null;
+}
+
+export interface TopicFeedbackSnapshotInput {
+  headline_tr: string;
+  summary_tr: string;
+  category: string;
+  aggregation_type: 'shared' | 'unique';
+  quality_status: 'publishable' | 'review';
+  quality_score: number;
+  source_count: number;
+  article_count: number;
+  sources: string[];
+  source_slugs: string[];
+  review_reasons: string[];
+  representative_article_ids: string[];
+  has_visual_asset: boolean;
+  has_published_at: boolean;
+}
+
+export interface TopicFeedbackUpsertRequest {
+  topic_id: string;
+  feedback_label: FeedbackLabel;
+  note?: string | null;
+  topic_snapshot: TopicFeedbackSnapshotInput;
+}
+
+export interface TopicFeedbackResponse {
+  topic_id: string;
+  latest_feedback: TopicLatestFeedback;
+}
+
+export interface TopicFeedbackDeleteResponse {
+  topic_id: string;
+  deleted: boolean;
+}
+
+export interface TopicScoreWeightRecommendation {
+  feature: string;
+  current_weight: number;
+  recommended_weight: number;
+  delta: number;
+  active_count: number;
+  inactive_count: number;
+  approval_rate_when_active: number;
+  approval_rate_when_inactive: number;
+  lift: number;
+}
+
+export interface TopicScoreTuningSample {
+  topic_id: string;
+  headline_tr: string;
+  feedback_label: FeedbackLabel;
+  quality_status: 'publishable' | 'review';
+  quality_score: number;
+}
+
+export interface TopicScoreTuningTotals {
+  feedback_count: number;
+  approved_count: number;
+  negative_count: number;
+  eligible_for_recommendations: boolean;
+  feedback_breakdown: TopicFeedbackCount[];
+}
+
+export interface TopicScoreTuningCalibrationSummary {
+  high_score_negative_count: number;
+  low_score_approved_count: number;
+}
+
+export interface TopicScoreTuningMismatchSamples {
+  high_score_negative: TopicScoreTuningSample[];
+  low_score_approved: TopicScoreTuningSample[];
+}
+
+export interface TopicScoreTuningReportResponse {
+  generated_at: string;
+  days: number;
+  source_category: string | null;
+  category: string | null;
+  totals: TopicScoreTuningTotals;
+  current_weights: Record<string, number>;
+  recommendations: TopicScoreWeightRecommendation[];
+  calibration_summary: TopicScoreTuningCalibrationSummary;
+  mismatch_samples: TopicScoreTuningMismatchSamples;
+  notes: string[];
 }
 
 export interface RemotionPromptPayload {

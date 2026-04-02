@@ -1,6 +1,8 @@
 import hashlib
 import math
-from datetime import datetime, timedelta
+from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +10,12 @@ from sqlalchemy.orm import selectinload
 
 from app.models.article import Article
 from app.models.source import Source
+from app.scrapers.article_detail import ArticleDetailEnricher
+from app.services.article_visibility import apply_article_visibility_filters, article_is_visible
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def normalize_url(url: str) -> str:
@@ -44,7 +52,9 @@ async def get_articles(
     per_page: int = 20,
 ) -> tuple[list[Article], int]:
     """Get paginated articles with filters."""
-    query = select(Article).join(Source).options(selectinload(Article.source))
+    query = apply_article_visibility_filters(
+        select(Article).join(Source).options(selectinload(Article.source))
+    )
 
     if source_slug:
         query = query.where(Source.slug == source_slug)
@@ -74,10 +84,143 @@ async def get_articles(
 
 
 async def get_article_by_id(db: AsyncSession, article_id) -> Article | None:
+    try:
+        normalized_id = UUID(str(article_id))
+    except (TypeError, ValueError):
+        return None
     result = await db.execute(
-        select(Article).where(Article.id == article_id)
+        select(Article)
+        .join(Source)
+        .where(Article.id == normalized_id)
+        .where(Source.is_active.is_(True))
+        .options(selectinload(Article.source))
     )
-    return result.scalar_one_or_none()
+    article = result.scalar_one_or_none()
+    if article is None or not article_is_visible(article):
+        return None
+    return article
+
+
+def article_to_enrichment_payload(article: Article) -> dict[str, Any]:
+    return {
+        "title": article.title,
+        "url": article.url,
+        "summary": article.summary,
+        "content_snippet": article.content_snippet,
+        "content_text": article.content_text,
+        "author": article.author,
+        "published_at": article.published_at,
+        "image_url": article.image_url,
+        "category": article.category,
+        "tags": article.tags,
+        "raw_metadata": dict(article.raw_metadata or {}),
+    }
+
+
+def merge_enriched_article(article: Article, enriched: dict[str, Any], *, changed: bool, attempted_at: datetime) -> None:
+    for field in (
+        "title",
+        "summary",
+        "content_snippet",
+        "content_text",
+        "author",
+        "published_at",
+        "image_url",
+        "category",
+        "tags",
+    ):
+        value = enriched.get(field)
+        if value not in (None, "", [], {}):
+            setattr(article, field, value)
+
+    raw_metadata = dict(enriched.get("raw_metadata") or article.raw_metadata or {})
+    detail_enrichment = dict(raw_metadata.get("detail_enrichment") or {})
+    detail_enrichment.setdefault("status", "success")
+    detail_enrichment.setdefault("changed", changed)
+    detail_enrichment.setdefault("fetched_at", attempted_at.isoformat())
+    raw_metadata["detail_enriched"] = changed
+    raw_metadata["detail_enrichment"] = detail_enrichment
+    article.raw_metadata = raw_metadata
+    article.detail_enriched = bool(article.content_text)
+    article.detail_fetched_at = attempted_at
+
+
+def record_detail_enrichment_state(
+    article: Article,
+    *,
+    status: str,
+    attempted_at: datetime | None = None,
+    error: str | None = None,
+) -> None:
+    raw_metadata = dict(article.raw_metadata or {})
+    detail_enrichment = {
+        "status": status,
+        "changed": False,
+        "error": error,
+    }
+    if attempted_at is not None:
+        detail_enrichment["fetched_at"] = attempted_at.isoformat()
+    raw_metadata["detail_enriched"] = bool(article.content_text)
+    raw_metadata["detail_enrichment"] = detail_enrichment
+    article.raw_metadata = raw_metadata
+    article.detail_enriched = bool(article.content_text)
+    if attempted_at is not None:
+        article.detail_fetched_at = attempted_at
+
+
+async def enrich_article_detail_if_needed(db: AsyncSession, article: Article) -> Article:
+    source = article.source
+    if source is None:
+        return article
+    if article.content_text and article.detail_enriched:
+        return article
+    if article.detail_fetched_at is not None:
+        return article
+    if source.has_paywall:
+        record_detail_enrichment_state(article, status="skipped_paywall")
+        await db.flush()
+        return article
+
+    detail_policy = (source.config or {}).get("detail_policy", "open_page_only")
+    if detail_policy != "open_page_only":
+        record_detail_enrichment_state(article, status="skipped_policy")
+        await db.flush()
+        return article
+
+    enricher = ArticleDetailEnricher(source)
+    if enricher.should_skip_url(article.url):
+        record_detail_enrichment_state(article, status="skipped_url")
+        await db.flush()
+        return article
+    payload = article_to_enrichment_payload(article)
+    if not enricher.needs_enrichment(payload, include_content_text=True):
+        return article
+    if not await enricher.is_allowed(article.url):
+        record_detail_enrichment_state(
+            article,
+            status="blocked_by_robots",
+            attempted_at=utcnow(),
+        )
+        await db.flush()
+        return article
+
+    attempted_at = utcnow()
+    try:
+        enriched, changed = await enricher.enrich_article(payload)
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        record_detail_enrichment_state(
+            article,
+            status="failed",
+            attempted_at=attempted_at,
+            error=str(exc)[:500],
+        )
+        await db.flush()
+        return article
+
+    merge_enriched_article(article, enriched, changed=changed, attempted_at=attempted_at)
+    await db.flush()
+    await db.refresh(article)
+    return article
 
 
 async def article_exists(db: AsyncSession, url: str) -> bool:
@@ -107,7 +250,7 @@ async def existing_url_hashes(db: AsyncSession, urls: list[str]) -> set[str]:
 async def create_article(db: AsyncSession, **kwargs) -> Article:
     """Create article with automatic URL hashing."""
     kwargs["url_hash"] = hash_url(kwargs["url"])
-    kwargs.setdefault("scraped_at", datetime.utcnow())
+    kwargs.setdefault("scraped_at", utcnow())
     article = Article(**kwargs)
     db.add(article)
     await db.flush()
@@ -120,15 +263,14 @@ async def get_trending_articles(
     limit: int = 20,
 ) -> list[Article]:
     """Get articles from the last N hours, prioritizing those covered by multiple sources."""
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
-    query = (
+    cutoff = utcnow() - timedelta(hours=hours)
+    query = apply_article_visibility_filters(
         select(Article)
         .join(Source)
         .options(selectinload(Article.source))
         .where(Article.published_at >= cutoff)
-        .order_by(Article.published_at.desc())
-        .limit(limit)
     )
+    query = query.order_by(Article.published_at.desc()).limit(limit)
     result = await db.execute(query)
     return list(result.scalars().all())
 

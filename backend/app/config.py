@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    APP_TIMEZONE: str = "Europe/Istanbul"
+
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/news_scraper"
 
@@ -15,6 +17,7 @@ class Settings(BaseSettings):
 
     # Scraping
     SCRAPE_INTERVAL_MINUTES: int = 60
+    ARTICLE_RETENTION_HOURS: int = 8
     DEFAULT_RATE_LIMIT_RPM: int = 10
     USER_AGENT: str = "GaseNewsScraper/1.0"
     GUARDIAN_API_KEY: str | None = None

@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import settings
 
@@ -12,33 +13,23 @@ celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    timezone="UTC",
+    timezone=settings.APP_TIMEZONE,
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    beat_schedule_filename="/tmp/celerybeat-schedule-v2",
 )
 
-# Beat schedule - hourly scraping
+# Beat schedule
 celery_app.conf.beat_schedule = {
-    "scrape-general-news": {
-        "task": "app.workers.scrape_tasks.scrape_by_category",
-        "schedule": settings.SCRAPE_INTERVAL_MINUTES * 60,
-        "args": ["general"],
+    "scrape-all-sources": {
+        "task": "app.workers.scrape_tasks.scrape_all_active_sources",
+        "schedule": crontab(minute=0),
     },
-    "scrape-finance-news": {
-        "task": "app.workers.scrape_tasks.scrape_by_category",
-        "schedule": settings.SCRAPE_INTERVAL_MINUTES * 60,
-        "args": ["finance"],
-    },
-    "scrape-sports-news": {
-        "task": "app.workers.scrape_tasks.scrape_by_category",
-        "schedule": settings.SCRAPE_INTERVAL_MINUTES * 60,
-        "args": ["sports"],
-    },
-    "cleanup-old-articles": {
-        "task": "app.workers.scrape_tasks.cleanup_old_articles",
-        "schedule": 86400.0,  # Daily
+    "cleanup-retained-articles": {
+        "task": "app.workers.scrape_tasks.cleanup_retained_articles",
+        "schedule": crontab(minute=0, hour=0),
     },
 }
 

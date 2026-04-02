@@ -53,10 +53,19 @@ def parse_datetime_to_utc_naive(value: Any) -> datetime | None:
     return dt
 
 
-def strip_html_like_text(value: str | None) -> str | None:
+def strip_html_like_text(value: Any) -> str | None:
     if value is None:
         return None
-    return " ".join(value.split()) or None
+    if isinstance(value, dict):
+        for key in ("name", "headline", "title", "description", "text", "value"):
+            if key in value:
+                return strip_html_like_text(value.get(key))
+        return None
+    if isinstance(value, (list, tuple, set)):
+        parts = [strip_html_like_text(item) for item in value]
+        joined = " ".join(part for part in parts if part)
+        return " ".join(joined.split()) or None
+    return " ".join(str(value).split()) or None
 
 
 def to_list(value: Any) -> list[Any]:

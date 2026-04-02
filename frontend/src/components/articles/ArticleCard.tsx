@@ -1,4 +1,5 @@
 import { ExternalLink, Lock, Clock } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { Article } from '../../types/article';
 
 interface Props {
@@ -18,25 +19,22 @@ function timeAgo(dateStr: string | null): string {
 
 export default function ArticleCard({ article }: Props) {
   return (
-    <a
-      href={article.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block bg-white rounded-lg border border-gray-200 p-4 hover:shadow-md transition-shadow"
-    >
+    <article className="bg-white rounded-lg border border-gray-200 p-4 transition-shadow hover:shadow-md">
       <div className="flex gap-4">
-        {article.image_url && (
-          <img
-            src={article.image_url}
-            alt=""
-            className="w-24 h-24 object-cover rounded-lg flex-shrink-0"
-            onError={(e) => (e.currentTarget.style.display = 'none')}
-          />
-        )}
+        <Link to={`/articles/${article.id}`} className="flex gap-4 flex-1 min-w-0">
+          {article.image_url && (
+            <img
+              src={article.image_url}
+              alt=""
+              className="w-24 h-24 object-cover rounded-lg flex-shrink-0"
+              onError={(e) => (e.currentTarget.style.display = 'none')}
+            />
+          )}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <h3 className="font-semibold text-gray-900 line-clamp-2">{article.title}</h3>
-            <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0 mt-1" />
+            <h3 className="font-semibold text-gray-900 line-clamp-2 transition-colors hover:text-blue-700">
+              {article.title}
+            </h3>
           </div>
 
           {article.summary && (
@@ -66,7 +64,17 @@ export default function ArticleCard({ article }: Props) {
             {article.author && <span>{article.author}</span>}
           </div>
         </div>
+        </Link>
+        <a
+          href={article.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="self-start rounded-full p-2 text-gray-400 transition hover:bg-slate-100 hover:text-gray-700"
+          aria-label="Orijinal haberi yeni sekmede ac"
+        >
+          <ExternalLink className="w-4 h-4" />
+        </a>
       </div>
-    </a>
+    </article>
   );
 }

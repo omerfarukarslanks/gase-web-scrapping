@@ -5,15 +5,33 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models.source import Source
-from app.schemas.article import ArticleListResponse, ArticleResponse
+from app.schemas.article import ArticleDetailResponse, ArticleListResponse, ArticleResponse
 from app.services.article_service import (
+    enrich_article_detail_if_needed,
     get_article_by_id,
     get_articles,
     get_trending_articles,
 )
 
 router = APIRouter()
+
+
+def hydrate_article_response(article) -> ArticleResponse:
+    data = ArticleResponse.model_validate(article)
+    if article.source:
+        data.source_name = article.source.name
+        data.source_slug = article.source.slug
+        data.has_paywall = article.source.has_paywall
+    return data
+
+
+def hydrate_article_detail_response(article) -> ArticleDetailResponse:
+    data = ArticleDetailResponse.model_validate(article)
+    if article.source:
+        data.source_name = article.source.name
+        data.source_slug = article.source.slug
+        data.has_paywall = article.source.has_paywall
+    return data
 
 
 @router.get("", response_model=ArticleListResponse)
@@ -41,14 +59,7 @@ async def list_articles(
     )
 
     # Enrich with source info
-    items = []
-    for article in articles:
-        data = ArticleResponse.model_validate(article)
-        if article.source:
-            data.source_name = article.source.name
-            data.source_slug = article.source.slug
-            data.has_paywall = article.source.has_paywall
-        items.append(data)
+    items = [hydrate_article_response(article) for article in articles]
 
     return ArticleListResponse(
         items=items,
@@ -66,18 +77,11 @@ async def trending_articles(
     db: AsyncSession = Depends(get_db),
 ):
     articles = await get_trending_articles(db, hours=hours, limit=limit)
-    items = []
-    for article in articles:
-        data = ArticleResponse.model_validate(article)
-        if article.source:
-            data.source_name = article.source.name
-            data.source_slug = article.source.slug
-            data.has_paywall = article.source.has_paywall
-        items.append(data)
+    items = [hydrate_article_response(article) for article in articles]
     return items
 
 
-@router.get("/{article_id}", response_model=ArticleResponse)
+@router.get("/{article_id}", response_model=ArticleDetailResponse)
 async def get_article(
     article_id: str,
     db: AsyncSession = Depends(get_db),
@@ -86,9 +90,5 @@ async def get_article(
     if not article:
         raise HTTPException(status_code=404, detail="Article not found")
 
-    data = ArticleResponse.model_validate(article)
-    if article.source:
-        data.source_name = article.source.name
-        data.source_slug = article.source.slug
-        data.has_paywall = article.source.has_paywall
-    return data
+    article = await enrich_article_detail_if_needed(db, article)
+    return hydrate_article_detail_response(article)

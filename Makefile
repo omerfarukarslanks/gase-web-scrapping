@@ -41,3 +41,6 @@ update-sources:
 
 fix-sources:
 	docker compose exec -e PYTHONPATH=/app api python -m scripts.fix_sources
+
+purge-removed-sources:
+	docker compose exec -e PYTHONPATH=/app api python -m scripts.purge_removed_sources

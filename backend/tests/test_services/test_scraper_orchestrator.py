@@ -55,6 +55,9 @@ async def test_scrape_source_records_discovery_stats(db_session, monkeypatch):
     assert run.discovery_method_used == "api"
     assert run.detail_enriched_count == 1
     assert run.metadata_only_count == 0
+    assert run.source_name_snapshot == "Guardian"
+    assert run.source_slug_snapshot == "guardian"
+    assert run.source_category_snapshot == "general"
 
     article_count = await db_session.scalar(
         select(func.count()).select_from(Article).where(Article.source_id == source.id)

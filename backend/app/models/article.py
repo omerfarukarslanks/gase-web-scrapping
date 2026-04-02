@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, JSON, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -16,6 +16,7 @@ class Article(Base, UUIDMixin, TimestampMixin):
     url_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     author: Mapped[str | None] = mapped_column(String(500), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
     scraped_at: Mapped[datetime] = mapped_column()
@@ -25,6 +26,8 @@ class Article(Base, UUIDMixin, TimestampMixin):
     language: Mapped[str] = mapped_column(String(10), default="en")
     source_category: Mapped[str] = mapped_column(String(20), default="general")
     raw_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    detail_enriched: Mapped[bool] = mapped_column(Boolean, default=False)
+    detail_fetched_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     source = relationship("Source", back_populates="articles")
 

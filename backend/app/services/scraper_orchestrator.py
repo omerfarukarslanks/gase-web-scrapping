@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,13 +12,20 @@ from app.services.article_service import create_article, existing_url_hashes, ha
 logger = logging.getLogger(__name__)
 
 
+def utcnow_naive() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 async def scrape_source(db: AsyncSession, source: Source) -> ScrapeRun:
     """Scrape a single source and record the run."""
     logger.info("Scrape started for %s (%s)", source.name, source.slug)
     run = ScrapeRun(
         source_id=source.id,
+        source_name_snapshot=source.name,
+        source_slug_snapshot=source.slug,
+        source_category_snapshot=source.category,
         status="running",
-        started_at=datetime.utcnow(),
+        started_at=utcnow_naive(),
     )
     db.add(run)
     await db.flush()
@@ -61,14 +68,14 @@ async def scrape_source(db: AsyncSession, source: Source) -> ScrapeRun:
         run.articles_updated = updated_count
         run.status = "completed"
 
-        source.last_scraped_at = datetime.utcnow()
+        source.last_scraped_at = utcnow_naive()
 
     except Exception as e:
         logger.error(f"Error scraping {source.slug}: {e}")
         run.status = "failed"
         run.error_message = str(e)
 
-    run.completed_at = datetime.utcnow()
+    run.completed_at = utcnow_naive()
     run.duration_seconds = (run.completed_at - run.started_at).total_seconds()
 
     await db.flush()
