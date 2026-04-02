@@ -27,6 +27,16 @@ services:
       timeout: 5s
       retries: 5
 
+  # Ollama bu makinede RAM kullanmasin diye simdilik uzak makinede calisiyor.
+  # Uzak sunucu: http://192.168.1.104:11434
+  # Gerekirse tekrar acmak icin bu blogu yorumdan cikar:
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+
   api:
     build:
       context: ./backend
@@ -37,7 +47,13 @@ services:
     env_file:
       - .env
     environment:
-      - PYTHONPATH=/app
+      PYTHONPATH: /app
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      ANALYSIS_MIN_SHARED_SOURCES: ${ANALYSIS_MIN_SHARED_SOURCES:-2}
+      ANALYSIS_MAX_ARTICLES_PER_RUN: ${ANALYSIS_MAX_ARTICLES_PER_RUN:-120}
+      ANALYSIS_MAX_ARTICLES_PER_SOURCE: ${ANALYSIS_MAX_ARTICLES_PER_SOURCE:-15}
+      ANALYSIS_TEXT_CHAR_LIMIT: ${ANALYSIS_TEXT_CHAR_LIMIT:-1200}
     volumes:
       - ./backend:/app
     depends_on:
@@ -54,7 +70,13 @@ services:
     env_file:
       - .env
     environment:
-      - PYTHONPATH=/app
+      PYTHONPATH: /app
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      ANALYSIS_MIN_SHARED_SOURCES: ${ANALYSIS_MIN_SHARED_SOURCES:-2}
+      ANALYSIS_MAX_ARTICLES_PER_RUN: ${ANALYSIS_MAX_ARTICLES_PER_RUN:-120}
+      ANALYSIS_MAX_ARTICLES_PER_SOURCE: ${ANALYSIS_MAX_ARTICLES_PER_SOURCE:-15}
+      ANALYSIS_TEXT_CHAR_LIMIT: ${ANALYSIS_TEXT_CHAR_LIMIT:-1200}
     volumes:
       - ./backend:/app
     depends_on:
@@ -71,7 +93,13 @@ services:
     env_file:
       - .env
     environment:
-      - PYTHONPATH=/app
+      PYTHONPATH: /app
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      ANALYSIS_MIN_SHARED_SOURCES: ${ANALYSIS_MIN_SHARED_SOURCES:-2}
+      ANALYSIS_MAX_ARTICLES_PER_RUN: ${ANALYSIS_MAX_ARTICLES_PER_RUN:-120}
+      ANALYSIS_MAX_ARTICLES_PER_SOURCE: ${ANALYSIS_MAX_ARTICLES_PER_SOURCE:-15}
+      ANALYSIS_TEXT_CHAR_LIMIT: ${ANALYSIS_TEXT_CHAR_LIMIT:-1200}
     volumes:
       - ./backend:/app
     depends_on:
@@ -105,3 +133,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  # ollama_data:

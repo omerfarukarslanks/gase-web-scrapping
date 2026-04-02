@@ -1,16 +1,12 @@
 import { Search, X } from 'lucide-react';
 import { useState } from 'react';
+import type { ArticleFilters as ArticleFiltersShape } from '../../types/article';
 import type { Source } from '../../types/source';
 
 interface Props {
   sources: Source[];
-  onFilter: (filters: {
-    source?: string;
-    category?: string;
-    source_category?: string;
-    search?: string;
-  }) => void;
-  currentFilters: Record<string, string | undefined>;
+  onFilter: (filters: Partial<ArticleFiltersShape>) => void;
+  currentFilters: ArticleFiltersShape;
 }
 
 // Kaynak türü (source.category): haberin hangi tür kaynaktan geldiği

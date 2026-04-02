@@ -55,6 +55,11 @@ DEBUG=true
 SCRAPE_INTERVAL_MINUTES=60
 DEFAULT_RATE_LIMIT_RPM=10
 USER_AGENT=GaseNewsScraper/1.0
+OLLAMA_BASE_URL=http://192.168.1.104:11434
+OLLAMA_MODEL=qwen2.5:7b-instruct
+ANALYSIS_MIN_SHARED_SOURCES=2
+ANALYSIS_MAX_ARTICLES_PER_RUN=120
+ANALYSIS_TEXT_CHAR_LIMIT=1200
 CORS_ORIGINS=["http://localhost:3000","http://localhost:80"]
 ```
 
@@ -74,6 +79,16 @@ Veya dogrudan Docker Compose ile:
 docker compose build
 docker compose up -d
 ```
+
+### 3.5. Analiz modeli icin uzak Ollama kullanimi
+
+Son 1 saat haber analizi endpoint'i bu makinede Docker icinde Ollama calistirmak yerine agdaki diger bilgisayardaki Ollama sunucusuna baglanir:
+
+```bash
+OLLAMA_BASE_URL=http://192.168.1.104:11434
+```
+
+Uzak makinede `qwen2.5:7b-instruct` modelinin hazir ve erisilebilir oldugundan emin ol.
 
 ### 4. Veritabani migration'larini calistir
 
@@ -148,6 +163,7 @@ make migrate-create msg="add new column"
 GET  /api/v1/articles              → Haber listesi (filtre: source, category, search, date)
 GET  /api/v1/articles/trending     → Gundem haberleri (son 24 saat)
 GET  /api/v1/articles/{id}         → Haber detayi
+GET  /api/v1/analysis/topic-briefs → Son `hours` icindeki shared + unique topic analizi, TR ozet + EN video prompt (`hours` varsayilan: 1)
 GET  /api/v1/sources               → Kaynak listesi (istatistiklerle)
 GET  /api/v1/sources/{slug}        → Kaynak detayi
 PATCH /api/v1/sources/{slug}       → Kaynak guncelle (aktif/pasif, aralik)
@@ -171,6 +187,17 @@ curl "http://localhost:8000/api/v1/articles?source_category=finance"
 
 # Arama yap
 curl "http://localhost:8000/api/v1/articles?search=economy"
+
+# Son 1 saatteki ortak ekonomi haberlerini analiz et
+curl "http://localhost:8000/api/v1/analysis/topic-briefs?source_category=finance&category=business&limit_topics=5"
+
+# Test icin pencereyi 3 saate cikar
+curl "http://localhost:8000/api/v1/analysis/topic-briefs?hours=3"
+
+# Notlar:
+# - `limit_topics`, response icindeki final topic/prompt sayisini sinirlar; ham haber sayisini degil.
+# - `aggregation_type=shared`, birden fazla kaynaktan gelen birlesik topic demektir.
+# - `aggregation_type=unique`, tek kaynakli veya ayri kalan haber icin uretilen tekil topic demektir.
 
 # Manuel scrape tetikle
 curl -X POST "http://localhost:8000/api/v1/sources/scrape/trigger?source_slug=bbc"
