@@ -40,6 +40,7 @@ export interface VideoPlanScene {
   layout_hint: VideoPlanLayoutHint;
   headline: string;
   body: string;
+  voiceover?: string;
   supporting_points: string[];
   key_figures: string[];
   key_data: string;
@@ -74,6 +75,7 @@ export interface StoryboardScene {
   kicker: string;
   headline: string;
   body: string;
+  voiceover?: string;
   source_line: string;
   asset_ids: string[];
   visual_elements: string[];
@@ -108,6 +110,20 @@ export interface VisualAsset {
   alt_text: string;
 }
 
+export interface PlanningDebugAngleScore {
+  angle_type: string;
+  quality_status: 'publishable' | 'review' | 'reject';
+  quality_score: number;
+  reasons: string[];
+}
+
+export interface PlanningDebug {
+  primary_angle_type: string;
+  alternate_angle_type: string | null;
+  alternate_video_plan_summary: string;
+  angle_scores: PlanningDebugAngleScore[];
+}
+
 export interface TopicBrief {
   topic_id: string;
   category: string;
@@ -136,6 +152,7 @@ export interface TopicBrief {
   video_plan: VideoPlan;
   video_content: VideoContent | null;
   remotion_storyboard: RemotionStoryboard;
+  planning_debug?: PlanningDebug | null;
 }
 
 export interface TopicGroup {
@@ -206,6 +223,7 @@ export interface TopicBriefFilters {
   hours?: number;
   limit_topics?: number;
   include_review?: boolean;
+  debug?: boolean;
 }
 
 export interface TopicQualitySampleRejection {

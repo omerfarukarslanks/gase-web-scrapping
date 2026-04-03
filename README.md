@@ -57,7 +57,7 @@ DEFAULT_RATE_LIMIT_RPM=10
 USER_AGENT=GaseNewsScraper/1.0
 GUARDIAN_API_KEY=5e577f2a-eb6f-4c98-8102-29f84b9b7436
 OLLAMA_BASE_URL=http://192.168.1.104:11434
-OLLAMA_MODEL=qwen2.5:7b-instruct
+OLLAMA_MODEL=qwen3:14b
 ANALYSIS_MIN_SHARED_SOURCES=2
 ANALYSIS_MAX_ARTICLES_PER_RUN=120
 ANALYSIS_TEXT_CHAR_LIMIT=1200
@@ -89,7 +89,7 @@ Son 1 saat haber analizi endpoint'i bu makinede Docker icinde Ollama calistirmak
 OLLAMA_BASE_URL=http://192.168.1.104:11434
 ```
 
-Uzak makinede `qwen2.5:7b-instruct` modelinin hazir ve erisilebilir oldugundan emin ol.
+Uzak makinede `qwen3:14b` modelinin hazir ve erisilebilir oldugundan emin ol.
 
 ### 4. Veritabani migration'larini calistir
 

@@ -184,7 +184,7 @@ function buildStoryboardFromPlan(plan: VideoPlan): RemotionStoryboard {
   const scenes: StoryboardScene[] = plan.scenes.map((scene) => {
     const stats: StoryboardStat[] = [];
     if (scene.key_data) {
-      stats.push({ label: 'Key data', value: truncate(scene.key_data, 28) });
+      stats.push({ label: 'Key data', value: truncate(scene.key_data, 60) });
     }
     stats.push({ label: 'Duration', value: `${scene.duration_seconds}s` });
 
@@ -193,13 +193,14 @@ function buildStoryboardFromPlan(plan: VideoPlan): RemotionStoryboard {
       duration_seconds: scene.duration_seconds,
       layout_hint: scene.layout_hint,
       kicker: scene.purpose.toUpperCase(),
-      headline: truncate(scene.headline, 100),
-      body: truncate(scene.body, 180),
+      headline: truncate(scene.headline, 2000),
+      body: truncate(scene.body, 2000),
+      voiceover: (scene as any).voiceover || scene.body || scene.headline,
       source_line: scene.source_line,
       asset_ids: scene.asset_ids.slice(0, 2),
-      visual_elements: scene.visual_direction ? [truncate(scene.visual_direction, 96)] : [],
-      bullet_points: scene.supporting_points.slice(0, 4).map((point) => truncate(point, 120)),
-      stats: stats.slice(0, 2),
+      visual_elements: scene.visual_direction ? [truncate(scene.visual_direction, 2000)] : [],
+      bullet_points: scene.supporting_points.slice(0, 4).map((point) => truncate(point, 2000)),
+      stats: stats.slice(0, 4),
       chips: scene.key_figures.slice(0, 4),
     };
   });
@@ -238,6 +239,7 @@ function buildFallbackVideoPlan(fields: {
       layout_hint: defaultLayout(fields.category, 'hook', keyData, keyFigures),
       headline: fields.videoContent?.headline || fields.headline,
       body: fields.summary,
+      voiceover: fields.summary || fields.headline,
       supporting_points: [],
       key_figures: keyFigures.slice(0, 4),
       key_data: keyData,
@@ -258,6 +260,7 @@ function buildFallbackVideoPlan(fields: {
       layout_hint: layout,
       headline: fields.keyPoints[0] || fields.summary,
       body: sceneCount === 2 ? fields.summary : '',
+      voiceover: fields.keyPoints[0] || fields.summary,
       supporting_points: fields.keyPoints.slice(0, 2),
       key_figures: keyFigures.slice(0, 4),
       key_data: layout === 'stat' ? keyData : '',
@@ -277,6 +280,7 @@ function buildFallbackVideoPlan(fields: {
       layout_hint: defaultLayout(fields.category, 'takeaway', '', keyFigures),
       headline: fields.whyItMatters,
       body: fields.whyItMatters,
+      voiceover: fields.whyItMatters,
       supporting_points: [],
       key_figures: keyFigures.slice(0, 3),
       key_data: '',
@@ -314,6 +318,7 @@ function cleanVideoPlanScene(value: unknown, fallback: VideoPlanScene, index: nu
     layout_hint: layoutHint,
     headline,
     body: cleanString(raw.body, fallback.body),
+    voiceover: cleanString(raw.voiceover, (fallback as any).voiceover || fallback.body),
     supporting_points: cleanStringArray(raw.supporting_points, fallback.supporting_points).slice(0, 4),
     key_figures: cleanStringArray(raw.key_figures, fallback.key_figures).slice(0, 4),
     key_data: cleanString(raw.key_data, fallback.key_data),
@@ -357,6 +362,7 @@ function normalizeVideoPlan(value: unknown, fallback: VideoPlan, visualAssets: V
       ...scene,
       duration_seconds: sceneDurations[index],
       source_line: normalizedVisibility === 'none' ? '' : scene.source_line,
+      voiceover: (scene as any).voiceover || scene.body || scene.headline,
       asset_ids: scene.asset_ids.filter((assetId) => validAssetIds.has(assetId)).slice(0, 2),
     })),
   };

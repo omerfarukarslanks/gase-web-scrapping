@@ -37,7 +37,7 @@ ContentCategory = Literal[
 ]
 
 
-@router.get("/topic-briefs", response_model=TopicBriefsResponse)
+@router.get("/topic-briefs", response_model=TopicBriefsResponse, response_model_exclude_none=True)
 async def topic_briefs(
     source_category: SourceCategory | None = None,
     category: ContentCategory | None = None,

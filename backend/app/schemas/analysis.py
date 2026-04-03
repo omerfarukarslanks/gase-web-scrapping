@@ -36,6 +36,7 @@ class VideoPlanScene(BaseModel):
     layout_hint: Literal["headline", "split", "stat", "timeline", "quote", "comparison", "minimal", "full-bleed"]
     headline: str
     body: str = ""
+    voiceover: str = ""
     supporting_points: list[str] = Field(default_factory=list)
     key_figures: list[str] = Field(default_factory=list)
     key_data: str = ""
@@ -68,6 +69,7 @@ class RemotionScene(BaseModel):
     kicker: str
     headline: str
     body: str
+    voiceover: str = ""
     source_line: str = ""
     asset_ids: list[str] = Field(default_factory=list)
     visual_elements: list[str] = Field(default_factory=list)
@@ -109,6 +111,20 @@ class TopicLatestFeedback(BaseModel):
     updated_at: datetime
 
 
+class PlanningDebugAngleScore(BaseModel):
+    angle_type: str
+    quality_status: Literal["publishable", "review", "reject"]
+    quality_score: int = Field(default=100, ge=0, le=100)
+    reasons: list[str] = Field(default_factory=list)
+
+
+class PlanningDebug(BaseModel):
+    primary_angle_type: str
+    alternate_angle_type: str | None = None
+    alternate_video_plan_summary: str = ""
+    angle_scores: list[PlanningDebugAngleScore] = Field(default_factory=list)
+
+
 class TopicBrief(BaseModel):
     topic_id: str
     category: str
@@ -137,6 +153,7 @@ class TopicBrief(BaseModel):
     video_plan: VideoPlan
     video_content: VideoContent | None = None
     remotion_storyboard: RemotionStoryboard
+    planning_debug: PlanningDebug | None = None
 
 
 class TopicGroup(BaseModel):

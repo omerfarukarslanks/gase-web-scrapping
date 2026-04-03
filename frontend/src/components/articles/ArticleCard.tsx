@@ -32,13 +32,13 @@ export default function ArticleCard({ article }: Props) {
           )}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <h3 className="font-semibold text-gray-900 line-clamp-2 transition-colors hover:text-blue-700">
+            <h3 className="font-semibold text-gray-900 transition-colors hover:text-blue-700">
               {article.title}
             </h3>
           </div>
 
           {article.summary && (
-            <p className="text-sm text-gray-600 mt-1 line-clamp-2">{article.summary}</p>
+            <p className="text-sm text-gray-600 mt-1">{article.summary}</p>
           )}
 
           <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">

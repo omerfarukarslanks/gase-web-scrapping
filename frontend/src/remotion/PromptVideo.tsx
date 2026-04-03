@@ -381,13 +381,13 @@ function HeadlineLayout({ scene, theme, payload }: { scene: VideoPlanScene; them
               maxWidth: 820,
               textAlign: 'center',
               color: theme.softInk,
-              fontSize: 24,
+            fontSize: scene.body.length > 180 ? 20 : 24,
               lineHeight: 1.45,
               opacity: body.opacity,
               transform: `translateY(${body.translateY}px)`,
             }}
           >
-            {truncateLabel(scene.body, 220)}
+          {scene.body}
           </p>
         ) : null}
         {scene.key_figures.length > 0 ? (
@@ -479,13 +479,13 @@ function FullBleedLayout({ scene, theme, payload }: { scene: VideoPlanScene; the
               margin: 0,
               maxWidth: hasAsset ? 660 : 760,
               color: theme.softInk,
-              fontSize: 25,
+              fontSize: scene.body.length > 180 ? 21 : 25,
               lineHeight: 1.42,
               opacity: copy.opacity,
               transform: `translateY(${copy.translateY}px)`,
             }}
           >
-            {truncateLabel(scene.body, 220)}
+            {scene.body}
           </p>
         ) : null}
       </div>
@@ -526,12 +526,12 @@ function SplitLayout({ scene, theme, payload }: { scene: VideoPlanScene; theme: 
               style={{
                 margin: '18px 0 0',
                 color: theme.softInk,
-                fontSize: 22,
+                fontSize: scene.body.length > 180 ? 19 : 22,
                 lineHeight: 1.45,
                 maxWidth: 620,
               }}
             >
-              {truncateLabel(scene.body, 220)}
+              {scene.body}
             </p>
           ) : null}
         </div>
@@ -565,7 +565,7 @@ function SplitLayout({ scene, theme, payload }: { scene: VideoPlanScene; theme: 
               >
                 Point {index + 1}
               </div>
-              <div style={{ marginTop: 10, fontSize: 20, lineHeight: 1.42 }}>{truncateLabel(point, 110)}</div>
+              <div style={{ marginTop: 10, fontSize: point.length > 80 ? 17 : 20, lineHeight: 1.42 }}>{point}</div>
             </div>
           ))}
           {scene.key_figures.length > 0 ? (
@@ -644,13 +644,13 @@ function StatLayout({ scene, theme, payload }: { scene: VideoPlanScene; theme: T
               margin: 0,
               maxWidth: 760,
               color: theme.softInk,
-              fontSize: 22,
+              fontSize: scene.body.length > 180 ? 19 : 22,
               lineHeight: 1.45,
               opacity: copy.opacity,
               transform: `translateY(${copy.translateY}px)`,
             }}
           >
-            {truncateLabel(scene.body, 220)}
+            {scene.body}
           </p>
         ) : null}
       </div>
@@ -690,12 +690,12 @@ function TimelineLayout({ scene, theme, payload }: { scene: VideoPlanScene; them
               style={{
                 margin: '18px 0 0',
                 color: theme.softInk,
-                fontSize: 21,
+                fontSize: scene.body.length > 180 ? 18 : 21,
                 lineHeight: 1.45,
                 maxWidth: 540,
               }}
             >
-              {truncateLabel(scene.body, 220)}
+              {scene.body}
             </p>
           ) : null}
         </div>
@@ -727,7 +727,7 @@ function TimelineLayout({ scene, theme, payload }: { scene: VideoPlanScene; them
               >
                 {index + 1}
               </div>
-              <div style={{ color: theme.ink, fontSize: 20, lineHeight: 1.42 }}>{truncateLabel(point, 120)}</div>
+              <div style={{ color: theme.ink, fontSize: point.length > 80 ? 17 : 20, lineHeight: 1.42 }}>{point}</div>
             </div>
           ))}
         </div>
@@ -774,12 +774,12 @@ function QuoteLayout({ scene, theme, payload }: { scene: VideoPlanScene; theme: 
               style={{
                 margin: '22px auto 0',
                 color: theme.softInk,
-                fontSize: 22,
+                fontSize: scene.body.length > 180 ? 19 : 22,
                 lineHeight: 1.45,
                 maxWidth: 760,
               }}
             >
-              {truncateLabel(scene.body, 220)}
+              {scene.body}
             </p>
           ) : null}
         </div>
@@ -853,12 +853,12 @@ function ComparisonLayout({ scene, theme, payload }: { scene: VideoPlanScene; th
                 style={{
                   marginTop: 14,
                   color: theme.ink,
-                  fontSize: 28,
+                  fontSize: item.length > 80 ? 22 : 28,
                   lineHeight: 1.25,
                   fontWeight: 700,
                 }}
               >
-                {truncateLabel(item, 110)}
+                {item}
               </div>
             </div>
           ))}
@@ -905,12 +905,12 @@ function MinimalLayout({ scene, theme, payload }: { scene: VideoPlanScene; theme
               maxWidth: 700,
               textAlign: 'center',
               color: theme.softInk,
-              fontSize: 20,
+                fontSize: scene.body.length > 150 ? 18 : 20,
               lineHeight: 1.45,
               opacity: reveal.opacity,
             }}
           >
-            {truncateLabel(scene.body, 180)}
+              {scene.body}
           </p>
         ) : null}
       </div>

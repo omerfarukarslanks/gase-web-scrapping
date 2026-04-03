@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Analysis
     OLLAMA_BASE_URL: str = "http://ollama:11434"
-    OLLAMA_MODEL: str = "qwen2.5:7b-instruct"
+    OLLAMA_MODEL: str = "qwen3:14b"
     ANALYSIS_MIN_SHARED_SOURCES: int = 2
     ANALYSIS_MAX_ARTICLES_PER_RUN: int = 120
     ANALYSIS_MAX_ARTICLES_PER_SOURCE: int = 15

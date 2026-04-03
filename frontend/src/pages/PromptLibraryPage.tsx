@@ -301,6 +301,38 @@ function TopicCard({
                   ) : (
                     <p className="mt-3 text-xs text-slate-500">Bu topic icin aktif video review reason yok.</p>
                   )}
+                  {topic.planning_debug ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+                      <p className="font-semibold uppercase tracking-[0.14em] text-slate-500">Planning debug</p>
+                      <p className="mt-2 text-sm font-medium text-slate-700">
+                        Primary angle:{' '}
+                        <span className="font-semibold text-slate-900">{topic.planning_debug.primary_angle_type}</span>
+                      </p>
+                      {topic.planning_debug.alternate_angle_type ? (
+                        <p className="mt-2 text-sm font-medium text-slate-700">
+                          Alternate angle:{' '}
+                          <span className="font-semibold text-slate-900">{topic.planning_debug.alternate_angle_type}</span>
+                        </p>
+                      ) : null}
+                      {topic.planning_debug.alternate_video_plan_summary ? (
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                          {topic.planning_debug.alternate_video_plan_summary}
+                        </p>
+                      ) : null}
+                      {topic.planning_debug.angle_scores.length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {topic.planning_debug.angle_scores.map((score) => (
+                            <span
+                              key={`${score.angle_type}-${score.quality_status}`}
+                              className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-800"
+                            >
+                              {score.angle_type} · {score.quality_status} · {score.quality_score}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 {topic.latest_feedback ? (
@@ -403,8 +435,8 @@ export default function PromptLibraryPage() {
   const [moderationMode, setModerationMode] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const effectiveFilters: TopicBriefFilters = moderationMode
-    ? { ...filters, include_review: true }
-    : { ...filters, include_review: undefined };
+    ? { ...filters, include_review: true, debug: true }
+    : { ...filters, include_review: undefined, debug: undefined };
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['topic-briefs', effectiveFilters],
