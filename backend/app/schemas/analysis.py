@@ -113,9 +113,14 @@ class TopicBrief(BaseModel):
     topic_id: str
     category: str
     aggregation_type: Literal["shared", "unique"]
+    story_language: str = "en"
+    editorial_type: str = "report"
     quality_status: Literal["publishable", "review"] = "publishable"
     quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
     review_reasons: list[str] = Field(default_factory=list)
+    video_quality_status: Literal["publishable", "review", "reject"] = "publishable"
+    video_quality_score: int = Field(default=100, ge=0, le=100)
+    video_review_reasons: list[str] = Field(default_factory=list)
     latest_feedback: TopicLatestFeedback | None = None
     headline_tr: str
     summary_tr: str
@@ -179,12 +184,16 @@ class AnalysisDebug(BaseModel):
     unique_topics_generated: int = 0
     publishable_topics_generated: int = 0
     review_topics_generated: int = 0
+    video_publishable_topics_generated: int = 0
+    video_review_topics_generated: int = 0
+    video_rejected_topics_generated: int = 0
     rejected_unique_candidates: int = 0
     dropped_unique_articles: int = 0
     source_breakdown: list[AnalysisSourceDebug] = Field(default_factory=list)
     cluster_previews: list[AnalysisClusterDebug] = Field(default_factory=list)
     rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
     review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
+    video_review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     ollama_base_url: str | None = None
     ollama_error: str | None = None
@@ -233,11 +242,16 @@ class TopicQualityTotals(BaseModel):
     avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
     publishable_avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
     review_avg_quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    video_publishable_topics: int = 0
+    video_review_topics: int = 0
+    video_rejected_topics: int = 0
     feedback_count: int = 0
     feedback_coverage_percent: float = Field(default=0.0, ge=0.0, le=100.0)
     score_distribution: list[TopicQualityScoreBand] = Field(default_factory=list)
     rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
+    input_rejection_breakdown: list[AnalysisRejectionDebug] = Field(default_factory=list)
     review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
+    video_review_breakdown: list[AnalysisReviewDebug] = Field(default_factory=list)
     feedback_breakdown: list[AnalysisFeedbackDebug] = Field(default_factory=list)
 
 
@@ -280,11 +294,14 @@ class TopicFeedbackSnapshotInput(BaseModel):
     aggregation_type: Literal["shared", "unique"]
     quality_status: Literal["publishable", "review"]
     quality_score: float = Field(ge=0.0, le=1.0)
+    video_quality_status: Literal["publishable", "review", "reject"]
+    video_quality_score: int = Field(ge=0, le=100)
     source_count: int
     article_count: int
     sources: list[str] = Field(default_factory=list)
     source_slugs: list[str] = Field(default_factory=list)
     review_reasons: list[str] = Field(default_factory=list)
+    video_review_reasons: list[str] = Field(default_factory=list)
     representative_article_ids: list[uuid.UUID] = Field(default_factory=list)
     has_visual_asset: bool = False
     has_published_at: bool = False

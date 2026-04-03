@@ -112,9 +112,14 @@ export interface TopicBrief {
   topic_id: string;
   category: string;
   aggregation_type: 'shared' | 'unique';
+  story_language: string;
+  editorial_type: string;
   quality_status: 'publishable' | 'review';
   quality_score: number;
   review_reasons: string[];
+  video_quality_status: 'publishable' | 'review' | 'reject';
+  video_quality_score: number;
+  video_review_reasons: string[];
   latest_feedback: TopicLatestFeedback | null;
   headline_tr: string;
   summary_tr: string;
@@ -171,12 +176,16 @@ export interface AnalysisDebug {
   unique_topics_generated: number;
   publishable_topics_generated: number;
   review_topics_generated: number;
+  video_publishable_topics_generated: number;
+  video_review_topics_generated: number;
+  video_rejected_topics_generated: number;
   rejected_unique_candidates: number;
   dropped_unique_articles: number;
   source_breakdown: AnalysisSourceDebug[];
   cluster_previews: AnalysisClusterDebug[];
   rejection_breakdown: { reason: string; count: number }[];
   review_breakdown: { reason: string; count: number }[];
+  video_review_breakdown: { reason: string; count: number }[];
   notes: string[];
   ollama_base_url: string | null;
   ollama_error: string | null;
@@ -243,11 +252,16 @@ export interface TopicQualityTotals {
   avg_quality_score: number;
   publishable_avg_quality_score: number;
   review_avg_quality_score: number;
+  video_publishable_topics: number;
+  video_review_topics: number;
+  video_rejected_topics: number;
   feedback_count: number;
   feedback_coverage_percent: number;
   score_distribution: TopicQualityScoreBand[];
   rejection_breakdown: TopicQualityReasonCount[];
+  input_rejection_breakdown: TopicQualityReasonCount[];
   review_breakdown: TopicQualityReasonCount[];
+  video_review_breakdown: TopicQualityReasonCount[];
   feedback_breakdown: TopicFeedbackCount[];
 }
 
@@ -290,11 +304,14 @@ export interface TopicFeedbackSnapshotInput {
   aggregation_type: 'shared' | 'unique';
   quality_status: 'publishable' | 'review';
   quality_score: number;
+  video_quality_status: 'publishable' | 'review' | 'reject';
+  video_quality_score: number;
   source_count: number;
   article_count: number;
   sources: string[];
   source_slugs: string[];
   review_reasons: string[];
+  video_review_reasons: string[];
   representative_article_ids: string[];
   has_visual_asset: boolean;
   has_published_at: boolean;

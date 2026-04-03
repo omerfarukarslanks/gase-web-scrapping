@@ -90,8 +90,8 @@ async def test_dashboard_stats_use_scrape_history_even_without_articles(
         source_name_snapshot="AP News",
         source_slug_snapshot="apnews",
         source_category_snapshot="general",
-        started_at=now - timedelta(minutes=20),
-        completed_at=now - timedelta(minutes=19),
+        started_at=now - timedelta(minutes=5),
+        completed_at=now - timedelta(minutes=4),
         articles_new=7,
     )
     await create_run(
@@ -100,8 +100,8 @@ async def test_dashboard_stats_use_scrape_history_even_without_articles(
         source_name_snapshot="Reuters",
         source_slug_snapshot="reuters",
         source_category_snapshot="general",
-        started_at=now - timedelta(minutes=10),
-        completed_at=now - timedelta(minutes=9),
+        started_at=now - timedelta(minutes=3),
+        completed_at=now - timedelta(minutes=2),
         articles_new=5,
     )
     await db_session.commit()

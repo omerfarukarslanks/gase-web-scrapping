@@ -55,6 +55,9 @@ async def create_article(
     created_at: datetime,
     category: str | None = None,
     image_url: str | None = None,
+    content_snippet: str | None = None,
+    content_text: str | None = None,
+    language: str = "en",
 ) -> Article:
     article = Article(
         source_id=source.id,
@@ -62,14 +65,15 @@ async def create_article(
         url=url,
         url_hash=hash_url(url),
         summary=summary,
-        content_snippet=None,
+        content_snippet=content_snippet,
+        content_text=content_text,
         author=None,
         published_at=published_at,
         scraped_at=created_at,
         image_url=image_url,
         category=category,
         tags=["energy", "markets"] if source_category == "finance" else ["sports"],
-        language="en",
+        language=language,
         source_category=source_category,
         raw_metadata=None,
         created_at=created_at,
@@ -110,6 +114,9 @@ async def seed_case(db_session: AsyncSession, case: dict) -> None:
             created_at=created_at,
             category=article_payload.get("category"),
             image_url=article_payload.get("image_url"),
+            content_snippet=article_payload.get("content_snippet"),
+            content_text=article_payload.get("content_text"),
+            language=article_payload.get("language", "en"),
         )
 
     await db_session.commit()
@@ -123,6 +130,13 @@ def rejection_breakdown(payload: dict) -> dict[str, int]:
     return {
         item["reason"]: item["count"]
         for item in payload.get("debug", {}).get("rejection_breakdown", [])
+    }
+
+
+def video_review_breakdown(payload: dict) -> dict[str, int]:
+    return {
+        item["reason"]: item["count"]
+        for item in payload.get("debug", {}).get("video_review_breakdown", [])
     }
 
 
@@ -159,6 +173,12 @@ def assert_golden_case(payload: dict, case: dict) -> None:
         assert [topic["aggregation_type"] for topic in topics] == expected["aggregation_types"]
     if "quality_statuses" in expected:
         assert [topic["quality_status"] for topic in topics] == expected["quality_statuses"]
+    if "video_quality_statuses" in expected:
+        assert [topic["video_quality_status"] for topic in topics] == expected["video_quality_statuses"]
+    if "story_languages" in expected:
+        assert [topic["story_language"] for topic in topics] == expected["story_languages"]
+    if "editorial_types" in expected:
+        assert [topic["editorial_type"] for topic in topics] == expected["editorial_types"]
     if expected.get("quality_score_descending"):
         assert [topic["quality_score"] for topic in topics] == sorted(
             [topic["quality_score"] for topic in topics],
@@ -191,5 +211,32 @@ def assert_golden_case(payload: dict, case: dict) -> None:
     for reason, count in expected.get("rejection_breakdown", {}).items():
         assert actual_breakdown.get(reason, 0) == count
 
+    actual_input_breakdown = {
+        item["reason"]: item["count"]
+        for item in payload.get("totals", {}).get("input_rejection_breakdown", [])
+    }
+    for reason, count in expected.get("input_rejection_breakdown", {}).items():
+        assert actual_input_breakdown.get(reason, 0) == count
+
+    actual_video_breakdown = video_review_breakdown(payload)
+    for reason, count in expected.get("video_review_breakdown", {}).items():
+        assert actual_video_breakdown.get(reason, 0) == count
+
+    for field in (
+        "video_publishable_topics_generated",
+        "video_review_topics_generated",
+        "video_rejected_topics_generated",
+    ):
+        if field in expected:
+            assert payload["debug"][field] == expected[field]
+
     for effect in expected.get("story_subtype_effects", []):
         assert_story_subtype_effect(topics[effect.get("topic_index", 0)], effect)
+
+    for expectation in expected.get("video_reason_expectations", []):
+        topic = topics[expectation.get("topic_index", 0)]
+        reasons = topic["video_review_reasons"]
+        for reason in expectation.get("contains", []):
+            assert reason in reasons
+        for reason in expectation.get("not_contains", []):
+            assert reason not in reasons

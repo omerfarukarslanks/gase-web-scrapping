@@ -822,5 +822,301 @@
       "must_contain_headlines": ["Petrol fiyatlari"],
       "dropped_unique_articles": 1
     }
+  },
+  {
+    "case_id": "video_rejects_cross_story_contamination_bosnia_yamal",
+    "description": "Video validator should reject Bosnian qualification coverage when another story leaks into the copy.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "aljazeera-video", "name": "Al Jazeera", "category": "sports"},
+      {"slug": "ap-video", "name": "AP News", "category": "sports"}
+    ],
+    "articles": [
+      {
+        "source_slug": "aljazeera-video",
+        "title": "Bosnia beats Italy on penalties to qualify for World Cup",
+        "url": "https://aljazeera.example.com/bosnia-italy-world-cup",
+        "source_category": "sports",
+        "summary": "Bosnia beat Italy on penalties to return to the World Cup after a dramatic playoff final.",
+        "content_text": "Bosnia and Herzegovina beat Italy on penalties after a 1-1 draw to qualify for the World Cup. Celebrations spilled from Zenica into Sarajevo after the decisive shootout.",
+        "published_minutes_ago": 20,
+        "created_minutes_ago": 20,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/bosnia-italy-aljazeera.jpg"
+      },
+      {
+        "source_slug": "ap-video",
+        "title": "Bosnia reaches World Cup after dramatic shootout win over Italy",
+        "url": "https://ap.example.com/bosnia-italy-shootout",
+        "source_category": "sports",
+        "summary": "A dramatic shootout sent Bosnia back to the World Cup and triggered celebrations across the country.",
+        "content_text": "A dramatic penalty shootout sent Bosnia back to the World Cup and supporters celebrated through the night after the playoff final.",
+        "published_minutes_ago": 16,
+        "created_minutes_ago": 16,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/bosnia-italy-ap.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Bosna Italya'yi penaltılarla eleyip Dunya Kupasi'na cıktı",
+        "summary_tr": "Bosna penaltılarla Italya'yi eledi. Lamine Yamal baska bir mac sonrası taraftar tezahuratlarini kinadi.",
+        "key_points_tr": [
+          "Bosna Italya'yi penaltılarla eledi.",
+          "Lamine Yamal taraftar tezahuratlari sonrası tepki gosterdi."
+        ],
+        "why_it_matters_tr": "Bu zafer Bosna icin tarihi bir gece oldu."
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "video_rejected_topics_generated": 1,
+      "video_review_breakdown": {"cross_story_contamination": 1}
+    }
+  },
+  {
+    "case_id": "video_review_missing_institutional_context_doj",
+    "description": "Policy/legal stories should be reviewed when the output misses institution and consequence context.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "cbs-video-doj", "name": "CBS News", "category": "general"},
+      {"slug": "ap-video-doj", "name": "AP News", "category": "general"}
+    ],
+    "articles": [
+      {
+        "source_slug": "cbs-video-doj",
+        "title": "DOJ says Presidential Records Act is unconstitutional",
+        "url": "https://cbs.example.com/doj-records-act",
+        "source_category": "general",
+        "summary": "The Justice Department said the Presidential Records Act is unconstitutional.",
+        "content_text": "The Justice Department's Office of Legal Counsel said the Presidential Records Act is unconstitutional and that President Trump does not need to comply with it. The law requires presidential records to be turned over to the National Archives.",
+        "published_minutes_ago": 18,
+        "created_minutes_ago": 18,
+        "category": "politics",
+        "image_url": "https://cdn.example.com/doj-cbs.jpg"
+      },
+    {
+      "source_slug": "ap-video-doj",
+      "title": "DOJ opinion says Trump does not need to follow Presidential Records Act",
+      "url": "https://ap.example.com/olc-trump-records-law",
+      "source_category": "general",
+      "summary": "A DOJ legal opinion said Trump does not need to comply with the Presidential Records Act.",
+      "content_text": "The opinion binds the executive branch unless a court later reaches a different interpretation of the legal question.",
+      "published_minutes_ago": 13,
+      "created_minutes_ago": 13,
+      "category": "politics",
+        "image_url": "https://cdn.example.com/doj-ap.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "DOJ Baskanlik Kayitlari Yasasi'nin anayasaya aykiri oldugunu soyluyor",
+        "summary_tr": "DOJ opinion says the records law is unconstitutional.",
+        "key_points_tr": ["DOJ says Presidential Records Act is unconstitutional."],
+        "why_it_matters_tr": "This could quickly reshape the political response around the case."
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "video_quality_statuses": ["review"],
+      "video_review_topics_generated": 1,
+      "video_review_breakdown": {"missing_institutional_context": 1},
+      "video_reason_expectations": [
+        {
+          "topic_index": 0,
+          "contains": ["missing_institutional_context"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "video_review_missing_numeric_impact_mortgage",
+    "description": "Business and personal finance stories should recover numeric impact from detail text even when the raw why-it-matters line is generic.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "cbs-video-mortgage", "name": "CBS News", "category": "general"},
+      {"slug": "ap-video-mortgage", "name": "AP News", "category": "general"}
+    ],
+    "articles": [
+      {
+        "source_slug": "cbs-video-mortgage",
+        "title": "Mortgage rates are surging, foiling homebuyers' best-laid plans",
+        "url": "https://cbs.example.com/mortgage-rates-surging",
+        "source_category": "general",
+        "summary": "Surging mortgage rates are threatening to wash out the spring homebuying season.",
+        "content_text": "The rate on a 30-year mortgage rose to 6.46% and buyers now face about $265 in extra monthly payments. That adds up to roughly $95,400 over the life of a 30-year loan.",
+        "published_minutes_ago": 19,
+        "created_minutes_ago": 19,
+        "category": "business",
+        "image_url": "https://cdn.example.com/mortgage-cbs.jpg"
+      },
+    {
+      "source_slug": "ap-video-mortgage",
+      "title": "Mortgage rates surge as higher yields raise costs for homebuyers",
+      "url": "https://ap.example.com/mortgage-costs-homebuyers",
+      "source_category": "general",
+      "summary": "Higher yields pushed mortgage borrowing costs back up for homebuyers.",
+      "content_text": "Borrowing costs jumped after Treasury yields climbed, making the average home loan noticeably more expensive for buyers.",
+      "published_minutes_ago": 14,
+      "created_minutes_ago": 14,
+      "category": "business",
+        "image_url": "https://cdn.example.com/mortgage-ap.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Mortgage faizleri yukseliyor, ev alicilarinin planlari bozuluyor",
+        "summary_tr": "Mortgage rates are surging, foiling homebuyers' best-laid plans.",
+        "key_points_tr": ["Mortgage rates are surging, foiling homebuyers' best-laid plans."],
+        "why_it_matters_tr": "The next confirmed update will likely shape where the story goes next."
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "video_quality_statuses": ["publishable"],
+      "video_publishable_topics_generated": 1
+    }
+  },
+  {
+    "case_id": "video_rejects_broken_copy_mickelson",
+    "description": "Broken copy and merged quotes should reject otherwise simple sports updates.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "guardian-video-mickelson", "name": "The Guardian", "category": "sports"},
+      {"slug": "ap-video-mickelson", "name": "AP News", "category": "sports"}
+    ],
+    "articles": [
+      {
+        "source_slug": "guardian-video-mickelson",
+        "title": "Phil Mickelson withdraws from Masters due to family health matter",
+        "url": "https://guardian.example.com/mickelson-masters-health",
+        "source_category": "sports",
+        "summary": "Phil Mickelson will miss the Masters because of a family health matter.",
+        "content_text": "Phil Mickelson said he will miss the Masters because of an ongoing family health matter and expects to be out for an extended period.",
+        "published_minutes_ago": 17,
+        "created_minutes_ago": 17,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/mickelson-guardian.jpg"
+      },
+    {
+      "source_slug": "ap-video-mickelson",
+      "title": "Phil Mickelson to miss Masters for extended period over family health matter",
+      "url": "https://ap.example.com/mickelson-augusta-extended-period",
+      "source_category": "sports",
+      "summary": "The three-time Masters champion said he will miss the Masters and remain away from competition.",
+      "content_text": "The three-time Masters champion said he will miss Augusta and remain away from competition for an extended period.",
+      "published_minutes_ago": 12,
+      "created_minutes_ago": 12,
+      "category": "sports",
+        "image_url": "https://cdn.example.com/mickelson-ap.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Phil Mickelson Masters'tan aile sagligi nedeniyle cekildi",
+        "summary_tr": "Three-time champion 'out for extended period''It is the most special week.",
+        "key_points_tr": ["Phil Mickelson Masters'ta yer almayacak."],
+        "why_it_matters_tr": "Augusta oncesi saha dısı en buyuk gelismelerden biri bu oldu."
+      }
+    ],
+    "expected": {
+      "topic_count": 0,
+      "video_rejected_topics_generated": 1,
+      "video_review_breakdown": {"broken_copy": 1}
+    }
+  },
+  {
+    "case_id": "speculative_transfer_story_stays_in_review",
+    "description": "Speculative transfer stories can generate prompts, but they should not become publishable videos.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "yahoo-transfer", "name": "Yahoo Sports", "category": "sports"}
+    ],
+    "articles": [
+      {
+        "source_slug": "yahoo-transfer",
+        "title": "USC a Possible Landing Spot for Women's Basketball Superstar",
+        "url": "https://sports.yahoo.com/articles/usc-a-possible-landing-spot-for-womens-basketball-superstar-123.html",
+        "source_category": "sports",
+        "summary": "Iowa State star Audi Crooks announced that she's entering the transfer portal for her final year of college basketball.",
+        "content_text": "Iowa State star Audi Crooks announced that she's entering the transfer portal for her final year of college basketball, and some believe she could land at USC. Crooks averaged 25.8 points and 7.7 rebounds per game this season.",
+        "published_minutes_ago": 12,
+        "created_minutes_ago": 12,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/audi-crooks-yahoo.jpg"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "USC, Audi Crooks icin olasi bir durak olabilir",
+        "summary_tr": "Audi Crooks transfer portalina girdi ve USC olasi adreslerden biri olarak gosteriliyor.",
+        "key_points_tr": ["Audi Crooks final sezonu oncesi transfer portalina girdi."],
+        "why_it_matters_tr": "USC kadrosu, Crooks icin dikkat ceken olasi senaryolardan biri olarak degerlendiriliyor."
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "editorial_types": ["speculative"],
+      "story_languages": ["en"],
+      "video_quality_statuses": ["review"],
+      "video_review_topics_generated": 1,
+      "video_review_breakdown": {"speculative_story": 1},
+      "video_reason_expectations": [
+        {
+          "topic_index": 0,
+          "contains": ["speculative_story"]
+        }
+      ]
+    }
+  },
+  {
+    "case_id": "spanish_sports_story_preserves_single_language_copy",
+    "description": "Single-language sports stories should keep viewer-facing copy in the source language.",
+    "hours": 3,
+    "include_review": true,
+    "sources": [
+      {"slug": "marca-english", "name": "Marca English", "category": "sports"}
+    ],
+    "articles": [
+      {
+        "source_slug": "marca-english",
+        "title": "Con la tabla de sumar pueden salir las cuentas",
+        "url": "https://marca.example.com/real-zaragoza-leganes",
+        "source_category": "sports",
+        "summary": "El equipo maño empata en Leganés y continúa creciendo de la mano de David Navarro.",
+        "content_text": "El Real Zaragoza empató 1-1 en Leganés y volvió a sumar en su lucha por la permanencia. El equipo de David Navarro sigue creciendo y el punto mantiene viva la pelea por la salvación.",
+        "published_minutes_ago": 10,
+        "created_minutes_ago": 10,
+        "category": "sports",
+        "image_url": "https://cdn.example.com/zaragoza-leganes.jpg",
+        "language": "es"
+      }
+    ],
+    "ollama_topics": [
+      {
+        "headline_tr": "Con la tabla de sumar pueden salir las cuentas",
+        "summary_tr": "El Real Zaragoza empató 1-1 en Leganés y sigue vivo en la pelea por la permanencia.",
+        "key_points_tr": ["El Zaragoza rescató un empate 1-1 en Leganés."],
+        "why_it_matters_tr": "El punto mantiene al equipo de David Navarro en la lucha por la salvación."
+      }
+    ],
+    "expected": {
+      "topic_count": 1,
+      "editorial_types": ["report"],
+      "story_languages": ["es"],
+      "video_quality_statuses": ["publishable"],
+      "video_publishable_topics_generated": 1,
+      "video_reason_expectations": [
+        {
+          "topic_index": 0,
+          "not_contains": ["mixed_language_copy"]
+        }
+      ]
+    }
   }
 ]

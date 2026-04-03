@@ -68,6 +68,8 @@ function buildTopicFeedbackSnapshot(topic: TopicBrief): TopicFeedbackSnapshotInp
     aggregation_type: topic.aggregation_type,
     quality_status: topic.quality_status,
     quality_score: topic.quality_score,
+    video_quality_status: topic.video_quality_status,
+    video_quality_score: topic.video_quality_score,
     source_count: topic.source_count,
     article_count: topic.article_count,
     sources: topic.sources,
@@ -75,6 +77,7 @@ function buildTopicFeedbackSnapshot(topic: TopicBrief): TopicFeedbackSnapshotInp
       .map((article) => article.source_slug)
       .filter((value): value is string => Boolean(value)),
     review_reasons: topic.review_reasons,
+    video_review_reasons: topic.video_review_reasons,
     representative_article_ids: topic.representative_articles.map((article) => article.id),
     has_visual_asset: topic.visual_assets.length > 0,
     has_published_at: topic.representative_articles.some((article) => Boolean(article.published_at)),
@@ -146,6 +149,16 @@ function TopicCard({
             </span>
             {moderationMode ? (
               <>
+                <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                  dil {topic.story_language}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
+                  {topic.editorial_type}
+                </span>
+              </>
+            ) : null}
+            {moderationMode ? (
+              <>
                 <span
                   className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
                     topic.quality_status === 'publishable'
@@ -157,6 +170,20 @@ function TopicCard({
                 </span>
                 <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
                   skor {topic.quality_score.toFixed(3)}
+                </span>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                    topic.video_quality_status === 'publishable'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : topic.video_quality_status === 'review'
+                        ? 'bg-amber-50 text-amber-700'
+                        : 'bg-rose-50 text-rose-700'
+                  }`}
+                >
+                  video {topic.video_quality_status}
+                </span>
+                <span className="inline-flex items-center rounded-full bg-fuchsia-50 px-3 py-1 text-xs font-semibold text-fuchsia-700">
+                  video skor {topic.video_quality_score}
                 </span>
               </>
             ) : null}
@@ -235,7 +262,16 @@ function TopicCard({
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Moderation</p>
                   <p className="mt-2 text-sm font-medium text-slate-700">
+                    Editorial type: <span className="font-semibold text-slate-900">{topic.editorial_type}</span>
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-slate-700">
+                    Story language: <span className="font-semibold text-slate-900">{topic.story_language}</span>
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-slate-700">
                     Status: <span className="font-semibold text-slate-900">{topic.quality_status}</span>
+                  </p>
+                  <p className="mt-2 text-sm font-medium text-slate-700">
+                    Video: <span className="font-semibold text-slate-900">{topic.video_quality_status}</span>
                   </p>
                   {topic.review_reasons.length > 0 ? (
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -250,6 +286,20 @@ function TopicCard({
                     </div>
                   ) : (
                     <p className="mt-3 text-xs text-slate-500">Bu topic icin aktif review reason yok.</p>
+                  )}
+                  {topic.video_review_reasons.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {topic.video_review_reasons.map((reason) => (
+                        <span
+                          key={reason}
+                          className="inline-flex items-center rounded-full bg-rose-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-800"
+                        >
+                          video:{reason}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-slate-500">Bu topic icin aktif video review reason yok.</p>
                   )}
                 </div>
 

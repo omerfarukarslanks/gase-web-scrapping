@@ -10,11 +10,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlparse
 
 import httpx
-import trafilatura
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -280,6 +279,12 @@ GENERIC_ENTITY_TOKENS = {
     "home",
     "guide",
     "president",
+    "political",
+    "reaction",
+    "watch",
+    "next",
+    "night",
+    "historic",
 }
 VALID_REJECTION_REASONS = {
     "non_news_url",
@@ -296,6 +301,27 @@ VALID_REVIEW_REASONS = {
     "thin_summary",
     "truncated_headline",
     "degraded_generation",
+}
+VALID_VIDEO_REVIEW_REASONS = {
+    "cross_story_contamination",
+    "broken_copy",
+    "unsupported_claim",
+    "generic_why_it_matters",
+    "headline_only_support",
+    "weak_scene_progression",
+    "low_information_anchors",
+    "missing_numeric_impact",
+    "missing_institutional_context",
+    "missing_sports_result_context",
+    "speculative_story",
+    "mixed_language_copy",
+    "generic_asset_only",
+    "missing_domain_fact_pack",
+}
+HARD_VIDEO_REJECT_REASONS = {
+    "cross_story_contamination",
+    "broken_copy",
+    "unsupported_claim",
 }
 VALID_FEEDBACK_LABELS = {"approved", "wrong", "boring", "malformed"}
 QUALITY_SCORE_WEIGHTS: dict[str, float] = {
@@ -317,6 +343,22 @@ QUALITY_SCORE_WEIGHTS: dict[str, float] = {
     "review_status": -0.05,
 }
 QUALITY_SCORE_FEATURES = tuple(feature for feature in QUALITY_SCORE_WEIGHTS if feature != "base")
+VIDEO_QUALITY_DEDUCTIONS: dict[str, int] = {
+    "cross_story_contamination": 40,
+    "broken_copy": 35,
+    "unsupported_claim": 30,
+    "generic_why_it_matters": 12,
+    "headline_only_support": 15,
+    "weak_scene_progression": 12,
+    "low_information_anchors": 8,
+    "missing_numeric_impact": 15,
+    "missing_institutional_context": 15,
+    "missing_sports_result_context": 15,
+    "speculative_story": 12,
+    "mixed_language_copy": 20,
+    "generic_asset_only": 10,
+    "missing_domain_fact_pack": 18,
+}
 TUNING_MIN_FEEDBACK = 40
 TUNING_MIN_APPROVED = 15
 TUNING_MIN_NEGATIVE = 15
@@ -335,6 +377,188 @@ TEXT_NORMALIZATION_TRANSLATION = str.maketrans(
         "\u2014": "-",
         "\u2026": "...",
     }
+)
+CLUSTER_TEXT_CHAR_LIMIT = 420
+VIDEO_GENERIC_WHY_MARKERS = (
+    "the next confirmed update will likely shape where the story goes next",
+    "the result can shape the momentum heading into the next game",
+    "the move could influence near-term market expectations",
+    "the development could shape the next phase of research or missions",
+    "the next product or policy response could quickly shift the story",
+    "the next official response will shape how the situation develops",
+    "the next official response will determine the immediate political impact",
+)
+DETAIL_TEXT_STOP_MARKERS = (
+    "recommended stories",
+    "related stories",
+    "related keywords",
+    "more from",
+    "read more",
+    "continue reading",
+    "also in the show",
+    "from the show",
+    "issued on:",
+    "reading time",
+    "to display this content from youtube",
+    "advertising related keywords",
+)
+LOW_INFORMATION_ANCHOR_TOKENS = {
+    "office",
+    "surging",
+    "three",
+    "latest",
+    "general",
+    "story",
+    "update",
+    "point",
+    "week",
+    "rates",
+    "mortgage",
+    "possible landing spot",
+    "women's basketball superstar",
+    "show",
+    "tariffs",
+    "trump's",
+}
+BUSINESS_NUMERIC_HINTS = (
+    "mortgage",
+    "rate",
+    "rates",
+    "yield",
+    "sales",
+    "price",
+    "prices",
+    "cost",
+    "costs",
+    "$",
+    "%",
+    "forecast",
+    "inflation",
+)
+INSTITUTIONAL_CONTEXT_HINTS = (
+    "department",
+    "office",
+    "court",
+    "law",
+    "legal",
+    "archives",
+    "president",
+    "government",
+    "agency",
+    "comply",
+)
+SPORTS_RESULT_HINTS = (
+    "won",
+    "win",
+    "beat",
+    "defeat",
+    "qualified",
+    "qualification",
+    "shootout",
+    "penalty",
+    "goal",
+    "final",
+    "champion",
+    "victory",
+)
+EDITORIAL_TYPES = {
+    "report",
+    "analysis",
+    "speculative",
+    "teaser_roundup",
+    "segment_teaser",
+    "related_links_page",
+    "live_blog",
+    "video_page",
+}
+INELIGIBLE_EDITORIAL_TYPES = {
+    "teaser_roundup",
+    "segment_teaser",
+    "related_links_page",
+    "live_blog",
+    "video_page",
+}
+SPECULATIVE_EDITORIAL_TYPES = {"speculative"}
+SPECULATIVE_MARKERS = (
+    "possible landing spot",
+    "could land",
+    "could join",
+    "could be headed",
+    "linked with",
+    "linked to",
+    "expected to",
+    "believe she could",
+    "possible destination",
+    "potential landing spot",
+    "rumor",
+    "rumour",
+)
+ANALYSIS_MARKERS = (
+    "analysis",
+    "explainer",
+    "what remains",
+    "what to know",
+    "how it works",
+    "why it matters",
+    "opinion",
+    "editorial",
+)
+SEGMENT_TEASER_MARKERS = (
+    "also in the show",
+    "from the show",
+    "issued on:",
+    "reading time",
+    "to display this content from youtube",
+)
+RELATED_LINK_MARKERS = (
+    "recommended stories",
+    "related stories",
+    "related keywords",
+    "list of 4 items",
+    "list of 3 items",
+    "list 1 of",
+    "list 2 of",
+)
+TEASER_ROUNDUP_MARKERS = (
+    "top stories",
+    "latest newscast",
+    "watch the latest",
+    "morning roundup",
+    "evening roundup",
+    "roundup",
+)
+VIDEO_PAGE_MARKERS = (
+    "/video/",
+    "/videos/",
+    "/watch/",
+    "video player",
+)
+LIVE_BLOG_MARKERS = (
+    "/live-blog/",
+    "/liveblog/",
+    "/live/",
+    "live updates",
+)
+GENERIC_ASSET_MARKERS = (
+    "social_share",
+    "share_generic",
+    "share_genric",
+    "generic",
+    "og_thumbnail",
+    "/share/",
+)
+LANGUAGE_HINT_WORDS: dict[str, tuple[str, ...]] = {
+    "en": ("the", "and", "with", "after", "from", "said", "will", "could", "mortgage", "rates", "point", "stay", "fight", "join"),
+    "es": ("el", "la", "los", "las", "con", "pero", "equipo", "empata", "continua", "mano", "navarro"),
+    "fr": ("le", "la", "les", "avec", "dans", "mais", "show", "france"),
+    "tr": ("ve", "bir", "ile", "icin", "gibi", "olan", "haber"),
+}
+LANGUAGE_CONFIDENCE_THRESHOLD = 2
+BROKEN_COPY_PATTERNS = (
+    re.compile(r"['\"]{2,}"),
+    re.compile(r"[a-z]['\"]{1}[A-Z]"),
+    re.compile(r"\b[A-Z][a-z]{0,2}\.$"),
+    re.compile(r"[.,;:!?]{2,}"),
 )
 SENTENCE_PROTECTED_ABBREVIATIONS = (
     "vs.",
@@ -359,13 +583,31 @@ class OllamaAnalysisError(RuntimeError):
 class PreparedArticle:
     article: Article
     normalized_category: str
-    analysis_text: str
+    cluster_text: str
+    detail_text: str
+    editorial_type: str
+    story_language: str
+    uncertainty_level: str
     timestamp: datetime
     source_name: str
     source_slug: str
     tag_tokens: set[str] = field(default_factory=set)
     title_tokens: set[str] = field(default_factory=set)
     text_tokens: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class StoryFactPack:
+    primary_event: str = ""
+    supporting_fact: str = ""
+    impact_fact: str = ""
+    numeric_facts: tuple[str, ...] = ()
+    actors: tuple[str, ...] = ()
+    institution: str = ""
+    result_context: str = ""
+    uncertainty_level: str = "confirmed"
+    story_language: str = "en"
+    editorial_type: str = "report"
 
 
 @dataclass(slots=True)
@@ -391,6 +633,9 @@ class TopicAnalysisEntry:
     quality_score: float
     score_features: dict[str, bool] = field(default_factory=dict)
     review_reasons: tuple[str, ...] = ()
+    video_quality_status: str = "publishable"
+    video_quality_score: int = 100
+    video_review_reasons: tuple[str, ...] = ()
     source_slugs: tuple[str, ...] = ()
     source_names: tuple[str, ...] = ()
     degraded_generation: bool = False
@@ -453,11 +698,28 @@ def compact_text(value: str | None) -> str:
     return normalized
 
 
+def truncate_viewer_text(value: str, limit: int = 84) -> str:
+    compacted = compact_text(value)
+    if len(compacted) <= limit:
+        return compacted
+    trimmed = compacted[:limit].rstrip(",;:.!?'\"")
+    if " " in trimmed:
+        trimmed = trimmed.rsplit(" ", 1)[0]
+    return compact_text(trimmed)
+
+
 def trim_words(value: str, max_words: int) -> str:
     words = compact_text(value).split()
     if len(words) <= max_words:
         return " ".join(words)
     return " ".join(words[:max_words]).rstrip(",;:.") + "..."
+
+
+def trim_viewer_words(value: str, max_words: int) -> str:
+    words = compact_text(value).split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).rstrip(",;:.!?")
 
 
 def split_sentences(value: str) -> list[str]:
@@ -517,7 +779,7 @@ def clean_viewer_text(
     if not sentences:
         sentences = [cleaned]
     merged = " ".join(sentences[:max_sentences])
-    return truncate_text(compact_text(merged), max_chars)
+    return truncate_viewer_text(compact_text(merged), max_chars)
 
 
 def clean_viewer_points(
@@ -538,6 +800,264 @@ def clean_viewer_points(
         if normalized:
             cleaned.append(normalized)
     return dedupe_preserve_order(cleaned)[:max_items]
+
+
+def text_similarity(left: str, right: str) -> float:
+    left_clean = compact_text(left)
+    right_clean = compact_text(right)
+    if not left_clean or not right_clean:
+        return 0.0
+    return max(
+        SequenceMatcher(None, left_clean.lower(), right_clean.lower()).ratio(),
+        jaccard_similarity(tokenize(left_clean, max_tokens=50), tokenize(right_clean, max_tokens=50)),
+    )
+
+
+def strip_detail_boilerplate(value: str | None) -> str:
+    cleaned = compact_text(value)
+    if not cleaned:
+        return ""
+
+    lowered = cleaned.lower()
+    cutoffs = [lowered.find(marker) for marker in DETAIL_TEXT_STOP_MARKERS if marker in lowered]
+    if cutoffs:
+        cleaned = cleaned[: min(index for index in cutoffs if index >= 0)]
+
+    cleaned = re.sub(r"list of \d+ items[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"list \d+ of \d+[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"-\s*list \d+ of \d+", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bissued on:\s*[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bfrom the show\b[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\breading time\s*\d+\s*min[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\badvertising related keywords\b.*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bto display this content from youtube\b[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:one of your browser extensions|you may need to disable it)[^.?!]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bby:\s*$", " ", cleaned, flags=re.IGNORECASE)
+    return compact_text(cleaned)
+
+
+def detect_text_language(text: str, *, fallback: str = "en") -> str:
+    normalized = compact_text(text).lower()
+    if not normalized:
+        return fallback
+
+    token_counts: dict[str, int] = {}
+    for language, hints in LANGUAGE_HINT_WORDS.items():
+        token_counts[language] = sum(len(re.findall(rf"\b{re.escape(hint)}\b", normalized)) for hint in hints)
+
+    if any(character in normalized for character in "ñáéíóúü"):
+        token_counts["es"] += 2
+    if any(character in normalized for character in "çğıöşü"):
+        token_counts["tr"] += 2
+    if any(character in normalized for character in "àâçéèêëîïôûùüÿœæ"):
+        token_counts["fr"] += 1
+
+    best_language, best_score = max(token_counts.items(), key=lambda item: item[1], default=(fallback, 0))
+    if best_score < LANGUAGE_CONFIDENCE_THRESHOLD:
+        return fallback
+    return best_language
+
+
+def contains_text_marker(value: str, marker: str) -> bool:
+    normalized_value = compact_text(value).lower()
+    normalized_marker = compact_text(marker).lower()
+    if not normalized_value or not normalized_marker:
+        return False
+    return bool(re.search(rf"(?<!\w){re.escape(normalized_marker)}(?!\w)", normalized_value))
+
+
+def dominant_story_language(cluster: list[PreparedArticle] | list[Article], *, fallback: str = "en") -> str:
+    scores: dict[str, int] = defaultdict(int)
+    for item in cluster:
+        if isinstance(item, PreparedArticle):
+            article = item.article
+            text = " ".join([item.detail_text, item.cluster_text, article.title, article.summary or ""])
+            language_hint = compact_text(item.story_language) or compact_text(article.language)
+        else:
+            article = item
+            text = " ".join([article.content_text or "", article.content_snippet or "", article.summary or "", article.title])
+            language_hint = compact_text(article.language)
+        detected = detect_text_language(text, fallback=language_hint or fallback)
+        scores[detected] += 2
+        if language_hint:
+            scores[language_hint] += 1
+    if not scores:
+        return fallback
+    return max(scores.items(), key=lambda item: item[1])[0]
+
+
+def classify_editorial_type(article: Article, *, detail_text: str) -> str:
+    title = compact_text(article.title).lower()
+    url = compact_text(article.url).lower()
+    combined = compact_text(" ".join([article.title, article.summary or "", detail_text])).lower()
+
+    if any(marker in url or marker in combined for marker in LIVE_BLOG_MARKERS):
+        return "live_blog"
+    if any(marker in url or marker in combined for marker in VIDEO_PAGE_MARKERS):
+        return "video_page"
+    if any(contains_text_marker(combined, marker) for marker in RELATED_LINK_MARKERS):
+        return "related_links_page"
+    if any(contains_text_marker(combined, marker) for marker in SEGMENT_TEASER_MARKERS):
+        return "segment_teaser"
+    if any(contains_text_marker(title, marker) or contains_text_marker(combined, marker) for marker in TEASER_ROUNDUP_MARKERS):
+        return "teaser_roundup"
+    if any(contains_text_marker(title, marker) or contains_text_marker(combined, marker) for marker in SPECULATIVE_MARKERS):
+        return "speculative"
+    if compact_text(article.category).lower() == "opinion" or any(marker in title for marker in ANALYSIS_MARKERS):
+        return "analysis"
+    return "report"
+
+
+def classify_uncertainty_level(editorial_type: str) -> str:
+    return "speculative" if editorial_type in SPECULATIVE_EDITORIAL_TYPES else "confirmed"
+
+
+def informative_anchor(value: str, *, headline: str = "") -> str:
+    candidate = compact_text(value).strip(".,;:!?")
+    if not candidate:
+        return ""
+    lowered = candidate.lower()
+    if lowered in LOW_INFORMATION_ANCHOR_TOKENS:
+        return ""
+    if text_similarity(candidate, headline) >= 0.96:
+        return ""
+    if " " not in candidate:
+        if candidate.isupper():
+            return candidate
+        if not candidate[:1].isupper():
+            return ""
+        if len(candidate) < 4:
+            return ""
+        if lowered in GENERIC_ENTITY_TOKENS:
+            return ""
+    return candidate
+
+
+def filter_informative_anchors(
+    values: list[str],
+    *,
+    headline: str = "",
+    max_items: int = 5,
+) -> list[str]:
+    anchors: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        candidate = informative_anchor(value, headline=headline)
+        if not candidate:
+            continue
+        key = candidate.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        anchors.append(candidate)
+        if len(anchors) >= max_items:
+            break
+    return anchors
+
+
+def text_contains_hint(text: str, hint: str) -> bool:
+    normalized = compact_text(text).lower()
+    if not normalized or not hint:
+        return False
+    lowered_hint = hint.lower()
+    if lowered_hint in {"$", "%"}:
+        return lowered_hint in normalized
+    return bool(re.search(rf"\b{re.escape(lowered_hint)}\b", normalized))
+
+
+def text_contains_any_hint(text: str, hints: Iterable[str]) -> bool:
+    return any(text_contains_hint(text, hint) for hint in hints)
+
+
+def is_generic_why_line(value: str) -> bool:
+    normalized = compact_text(value).lower()
+    if not normalized:
+        return True
+    return any(marker in normalized for marker in VIDEO_GENERIC_WHY_MARKERS)
+
+
+def build_why_it_matters_line(
+    category: str,
+    *,
+    headline: str = "",
+    summary: str = "",
+    key_points: list[str] | None = None,
+    cluster: list[PreparedArticle] | None = None,
+) -> str:
+    key_points = key_points or []
+    cluster = cluster or []
+    source_names = unique_source_names(cluster)
+
+    candidate_sentences = dedupe_preserve_order(
+        [
+            clean_viewer_text(point, source_names=source_names, max_sentences=1, max_chars=120)
+            for point in key_points
+        ]
+        + [
+            clean_viewer_text(summary, source_names=source_names, max_sentences=2, max_chars=160),
+        ]
+        + [
+            clean_viewer_text(
+                sentence,
+                source_names=source_names,
+                max_sentences=1,
+                max_chars=120,
+            )
+            for item in cluster[:3]
+            for sentence in split_sentences(item.detail_text)
+        ]
+    )
+
+    best_candidate = ""
+    best_score = float("-inf")
+    lowered_category = compact_text(category).lower()
+    for candidate in candidate_sentences:
+        normalized = compact_text(candidate)
+        if not normalized:
+            continue
+        if is_generic_why_line(normalized):
+            continue
+        if looks_broken_title(normalized) or has_html_artifact(normalized):
+            continue
+
+        similarity_penalty = text_similarity(normalized, headline) * 0.55
+        token_count = len(tokenize(normalized, max_tokens=40))
+        keyword_bonus = 0.0
+        lower_candidate = normalized.lower()
+        if lowered_category == "business" and text_contains_any_hint(lower_candidate, BUSINESS_NUMERIC_HINTS):
+            keyword_bonus += 0.25
+        if lowered_category in {"world", "politics", "general"} and any(
+            text_contains_hint(lower_candidate, token) for token in INSTITUTIONAL_CONTEXT_HINTS
+        ):
+            keyword_bonus += 0.22
+        if lowered_category == "sports" and (extract_score([normalized]) or text_contains_any_hint(lower_candidate, SPORTS_RESULT_HINTS)):
+            keyword_bonus += 0.24
+        if extract_numeric_phrase([normalized]) or extract_score([normalized]):
+            keyword_bonus += 0.18
+        if text_contains_any_hint(lower_candidate, ("means", "would", "could", "will", "after", "because", "so")):
+            keyword_bonus += 0.1
+
+        score = min(token_count / 16.0, 0.3) + keyword_bonus - similarity_penalty
+        if score > best_score and similarity_penalty < 0.68:
+            best_candidate = normalized
+            best_score = score
+
+    if best_candidate:
+        return truncate_viewer_text(best_candidate, 120)
+
+    fallback_candidates = dedupe_preserve_order(
+        clean_viewer_points(key_points, source_names=source_names, max_items=2, max_chars=120)
+        + [clean_viewer_text(summary, source_names=source_names, max_sentences=1, max_chars=120)]
+    )
+    for candidate in fallback_candidates:
+        if candidate and text_similarity(candidate, headline) < 0.88:
+            return truncate_viewer_text(candidate, 120)
+
+    return truncate_viewer_text(
+        clean_viewer_text(summary, source_names=source_names, max_sentences=1, max_chars=120)
+        or trim_viewer_words(headline, 12),
+        120,
+    )
 
 
 def make_rejection(
@@ -801,18 +1321,29 @@ def infer_story_subtype(
     return "general"
 
 
+def editorial_type_rejection_reason(editorial_type: str) -> str | None:
+    if editorial_type in INELIGIBLE_EDITORIAL_TYPES:
+        return "utility_or_hub_page"
+    return None
+
+
 def article_eligibility_reason(
     article: Article,
     *,
     timestamp: datetime,
+    detail_text: str,
+    editorial_type: str,
     rules: SourceAnalysisRules | None = None,
 ) -> str | None:
     raw_title = article.title or ""
-    raw_summary = article.summary or article.content_snippet or ""
+    raw_summary = detail_text
     clean_title = compact_text(raw_title)
     clean_summary = compact_text(raw_summary)
     source_rules = rules or SourceAnalysisRules()
 
+    editorial_rejection = editorial_type_rejection_reason(editorial_type)
+    if editorial_rejection:
+        return editorial_rejection
     if url_has_non_news_segment(article.url):
         last_segment = last_path_segment(article.url)
         if last_segment in {"video", "videos", "watch"}:
@@ -847,10 +1378,7 @@ def unique_candidate_rejection_reason(cluster: list[PreparedArticle]) -> str | N
 
     representative = cluster[0].article
     titles = [compact_text(item.article.title) for item in cluster if compact_text(item.article.title)]
-    summaries = [
-        compact_text(item.article.summary) or compact_text(item.article.content_snippet)
-        for item in cluster
-    ]
+    summaries = [compact_text(item.detail_text) or compact_text(item.cluster_text) for item in cluster]
     headline = min(titles, key=len) if titles else compact_text(representative.title)
     summary = " ".join([value for value in summaries if value][:2]) or headline
     category = cluster[0].normalized_category
@@ -1058,6 +1586,398 @@ def topic_feedback_score_features(snapshot: TopicFeedbackSnapshotInput) -> dict[
     )
 
 
+def topic_video_output_texts(topic: TopicBrief) -> list[str]:
+    scene_texts = [
+        value
+        for scene in topic.video_plan.scenes
+        for value in [scene.headline, scene.body, *scene.supporting_points]
+        if compact_text(value)
+    ]
+    narrative = topic.video_content.narrative if topic.video_content else []
+    return [
+        topic.headline_tr,
+        topic.summary_tr,
+        topic.why_it_matters_tr,
+        *topic.key_points_tr,
+        *scene_texts,
+        *narrative,
+    ]
+
+
+def topic_video_english_texts(topic: TopicBrief) -> list[str]:
+    scene_texts = [
+        value
+        for scene in topic.video_plan.scenes
+        for value in [scene.headline, scene.body, *scene.supporting_points]
+        if compact_text(value)
+    ]
+    narrative = topic.video_content.narrative if topic.video_content else []
+    return scene_texts + narrative + [topic.video_plan.title]
+
+
+def has_broken_copy(topic: TopicBrief) -> bool:
+    values = topic_video_output_texts(topic)
+    for value in values:
+        normalized = compact_text(value)
+        if not normalized:
+            continue
+        if has_html_artifact(normalized):
+            return True
+        for pattern in BROKEN_COPY_PATTERNS:
+            if pattern.search(normalized):
+                return True
+        if "..." in normalized:
+            return True
+    return False
+
+
+def has_mixed_language_copy(topic: TopicBrief) -> bool:
+    visible_values = [
+        topic.headline_tr,
+        topic.summary_tr,
+        topic.why_it_matters_tr,
+        *topic.key_points_tr,
+        *[
+            value
+            for scene in topic.video_plan.scenes
+            for value in [scene.headline, scene.body, *scene.supporting_points]
+        ],
+    ]
+    detected_languages: list[str] = []
+    for value in visible_values:
+        compacted = compact_text(value)
+        if not compacted:
+            continue
+        detected = detect_text_language(compacted, fallback=topic.story_language)
+        if detected:
+            detected_languages.append(detected)
+    distinct_languages = {language for language in detected_languages if language}
+    if not distinct_languages:
+        return False
+    dominant = max(
+        ((language, detected_languages.count(language)) for language in distinct_languages),
+        key=lambda item: item[1],
+    )[0]
+    return dominant != topic.story_language or len(distinct_languages) > 1
+
+
+def has_generic_asset_only(topic: TopicBrief) -> bool:
+    if not topic.visual_assets:
+        return False
+    if any(asset.kind == "article_image" for asset in topic.visual_assets):
+        return False
+    return any(any(marker in asset.url.lower() for marker in GENERIC_ASSET_MARKERS) for asset in topic.visual_assets)
+
+
+def has_missing_domain_fact_pack(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=topic.category,
+        headline=topic.headline_tr,
+        summary=topic.summary_tr,
+        key_points=topic.key_points_tr,
+    )
+    detail_corpus = compact_text(" ".join(item.detail_text for item in cluster)).lower()
+    if not fact_pack.primary_event:
+        return True
+    if fact_pack.supporting_fact and text_similarity(fact_pack.supporting_fact, topic.headline_tr) < 0.72:
+        return False
+    if topic.category == "business":
+        metric_heavy_business = bool(extract_score([detail_corpus]) or extract_numeric_phrase([detail_corpus])) or text_contains_any_hint(
+            detail_corpus,
+            BUSINESS_NUMERIC_HINTS,
+        )
+        if metric_heavy_business:
+            return not fact_pack.numeric_facts and not fact_pack.impact_fact
+        return not (fact_pack.supporting_fact or fact_pack.impact_fact or fact_pack.actors or fact_pack.institution)
+    if topic.category == "sports":
+        result_driven_sports = bool(extract_score([detail_corpus])) or text_contains_any_hint(
+            detail_corpus,
+            SPORTS_RESULT_HINTS,
+        )
+        if fact_pack.editorial_type in SPECULATIVE_EDITORIAL_TYPES:
+            return not (fact_pack.supporting_fact and fact_pack.actors)
+        if result_driven_sports:
+            supporting_fact = compact_text(fact_pack.supporting_fact).lower()
+            return not (
+                fact_pack.result_context
+                or (
+                    supporting_fact
+                    and (
+                        bool(extract_score([supporting_fact]))
+                        or text_contains_any_hint(supporting_fact, SPORTS_RESULT_HINTS)
+                    )
+                )
+            )
+        return not (fact_pack.supporting_fact or fact_pack.actors or fact_pack.impact_fact)
+    if topic.category in {"world", "politics", "general"}:
+        institutional_story = text_contains_any_hint(detail_corpus, INSTITUTIONAL_CONTEXT_HINTS)
+        if institutional_story:
+            return not fact_pack.institution and not fact_pack.impact_fact
+        return not (fact_pack.supporting_fact or fact_pack.impact_fact or fact_pack.actors)
+    return not fact_pack.supporting_fact
+
+
+def has_speculative_story(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=topic.category,
+        headline=topic.headline_tr,
+        summary=topic.summary_tr,
+        key_points=topic.key_points_tr,
+    )
+    return fact_pack.editorial_type in SPECULATIVE_EDITORIAL_TYPES
+
+
+def has_cross_story_contamination(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    values = topic_video_output_texts(topic)
+    detail_corpus = compact_text(
+        " ".join(
+            compact_text(value)
+            for item in cluster
+            for value in (item.detail_text, item.cluster_text, item.article.title, item.article.summary)
+            if compact_text(value)
+        )
+    )
+    detail_names = {
+        normalize_prompt_entity(name).lower()
+        for name in extract_named_phrases([detail_corpus], ignore=set(unique_source_names(cluster)), max_items=20)
+        if normalize_prompt_entity(name).lower() not in GENERIC_ENTITY_TOKENS
+        and normalize_prompt_entity(name).lower() not in LOW_INFORMATION_ANCHOR_TOKENS
+    }
+    headline_names = {
+        normalize_prompt_entity(name).lower()
+        for name in extract_named_phrases([topic.headline_tr], ignore=set(unique_source_names(cluster)), max_items=6)
+        if normalize_prompt_entity(name).lower() not in GENERIC_ENTITY_TOKENS
+        and normalize_prompt_entity(name).lower() not in LOW_INFORMATION_ANCHOR_TOKENS
+    }
+    for value in values:
+        normalized = compact_text(value)
+        lowered = normalized.lower()
+        if not normalized:
+            continue
+        if any(marker in lowered for marker in DETAIL_TEXT_STOP_MARKERS):
+            return True
+        if re.search(r"list of \d+ items|list \d+ of \d+", lowered):
+            return True
+
+    if len(topic.key_points_tr) >= 2:
+        for point in topic.key_points_tr[1:]:
+            point_names = {
+                normalize_prompt_entity(name).lower()
+                for name in extract_named_phrases([point], ignore=set(unique_source_names(cluster)), max_items=4)
+                if normalize_prompt_entity(name).lower() not in GENERIC_ENTITY_TOKENS
+                and normalize_prompt_entity(name).lower() not in LOW_INFORMATION_ANCHOR_TOKENS
+            }
+            unknown_point_names = [name for name in point_names if name and name not in detail_names]
+            if (
+                unknown_point_names
+                and text_similarity(point, topic.headline_tr) < 0.55
+                and text_similarity(point, detail_corpus) < 0.25
+            ):
+                return True
+            if point_names and headline_names and point_names.isdisjoint(headline_names) and text_similarity(point, topic.headline_tr) < 0.12:
+                return True
+
+    for scene in topic.video_plan.scenes[1:]:
+        scene_text = compact_text(" ".join([scene.headline, scene.body, *scene.supporting_points]))
+        if not scene_text:
+            continue
+        scene_names = {
+            normalize_prompt_entity(name).lower()
+            for name in extract_named_phrases([scene_text], ignore=set(unique_source_names(cluster)), max_items=6)
+            if normalize_prompt_entity(name).lower() not in GENERIC_ENTITY_TOKENS
+            and normalize_prompt_entity(name).lower() not in LOW_INFORMATION_ANCHOR_TOKENS
+        }
+        unknown_scene_names = [name for name in scene_names if name and name not in detail_names]
+        if (
+            unknown_scene_names
+            and text_similarity(scene_text, topic.headline_tr) < 0.55
+            and text_similarity(scene_text, detail_corpus) < 0.25
+        ):
+            return True
+    return False
+
+
+def has_unsupported_claim(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    detail_corpus = compact_text(
+        " ".join(
+            compact_text(value)
+            for item in cluster
+            for value in (
+                item.detail_text,
+                item.cluster_text,
+                item.article.title,
+                item.article.summary,
+            )
+            if compact_text(value)
+        )
+    )
+    output_values = topic_video_english_texts(topic)
+
+    detail_numeric = {
+        compact_text(match.group(0)).lower()
+        for match in NUMERIC_PHRASE_RE.finditer(detail_corpus)
+    }
+    output_numeric = {
+        compact_text(match.group(0)).lower()
+        for value in output_values
+        for match in NUMERIC_PHRASE_RE.finditer(value)
+    }
+    unknown_numeric = [
+        value
+        for value in output_numeric
+        if not value.startswith("point ")
+        and not any(value == detail or value in detail or detail in value for detail in detail_numeric)
+    ]
+    return bool(unknown_numeric)
+
+
+def has_headline_only_support(topic: TopicBrief) -> bool:
+    if len(topic.video_plan.scenes) < 2:
+        return False
+    second_scene = topic.video_plan.scenes[1]
+    candidate_text = compact_text(" ".join([second_scene.headline, second_scene.body, *second_scene.supporting_points]))
+    if not candidate_text:
+        return True
+    return text_similarity(candidate_text, topic.headline_tr) >= 0.72
+
+
+def has_low_information_anchors(topic: TopicBrief) -> bool:
+    raw_anchors = dedupe_preserve_order(
+        [figure for scene in topic.video_plan.scenes for figure in scene.key_figures]
+        + (topic.video_content.key_figures if topic.video_content else [])
+        + topic.video_prompt_parts.must_include
+    )
+    if len(raw_anchors) < 2:
+        return False
+    informative = filter_informative_anchors(raw_anchors, headline=topic.headline_tr, max_items=len(raw_anchors))
+    return len(informative) <= max(1, len(raw_anchors) // 2)
+
+
+def has_missing_numeric_impact(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    detail_corpus = compact_text(" ".join(item.detail_text for item in cluster))
+    output_corpus = compact_text(" ".join(topic_video_english_texts(topic) + [topic.why_it_matters_tr]))
+    story_is_numeric = topic.category == "business" or text_contains_any_hint(detail_corpus, BUSINESS_NUMERIC_HINTS)
+    if not story_is_numeric:
+        return False
+    has_detail_numeric = bool(extract_score([detail_corpus]) or extract_numeric_phrase([detail_corpus]))
+    has_output_numeric = bool(extract_score([output_corpus]) or extract_numeric_phrase([output_corpus]))
+    return has_detail_numeric and not has_output_numeric
+
+
+def has_missing_institutional_context(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    detail_corpus = compact_text(" ".join(item.detail_text for item in cluster)).lower()
+    output_corpus = compact_text(" ".join(topic_video_english_texts(topic) + [topic.why_it_matters_tr])).lower()
+    story_is_institutional = topic.category in {"world", "politics", "general"} and text_contains_any_hint(
+        detail_corpus,
+        INSTITUTIONAL_CONTEXT_HINTS,
+    )
+    if not story_is_institutional:
+        return False
+    institution_markers = ("department", "office", "archives", "agency", "government")
+    consequence_markers = ("comply", "president", "court", "executive", "binds")
+    has_detail_context = text_contains_any_hint(detail_corpus, institution_markers) and text_contains_any_hint(
+        detail_corpus,
+        consequence_markers,
+    )
+    has_output_context = text_contains_any_hint(output_corpus, institution_markers) and text_contains_any_hint(
+        output_corpus,
+        consequence_markers,
+    )
+    return has_detail_context and not has_output_context
+
+
+def has_missing_sports_result_context(topic: TopicBrief, cluster: list[PreparedArticle]) -> bool:
+    if topic.category != "sports":
+        return False
+    detail_corpus = compact_text(" ".join(item.detail_text for item in cluster)).lower()
+    output_corpus = compact_text(" ".join(topic_video_english_texts(topic) + [topic.why_it_matters_tr])).lower()
+    has_detail_result = bool(extract_score([detail_corpus])) or text_contains_any_hint(detail_corpus, SPORTS_RESULT_HINTS)
+    has_output_result = bool(extract_score([output_corpus])) or text_contains_any_hint(output_corpus, SPORTS_RESULT_HINTS)
+    return has_detail_result and not has_output_result
+
+
+def evaluate_video_quality(
+    topic: TopicBrief,
+    *,
+    cluster: list[PreparedArticle],
+) -> tuple[str, int, tuple[str, ...]]:
+    reasons: list[str] = []
+    why_line = compact_text(topic.why_it_matters_tr)
+
+    if has_cross_story_contamination(topic, cluster):
+        reasons.append("cross_story_contamination")
+    if has_broken_copy(topic):
+        reasons.append("broken_copy")
+    if has_unsupported_claim(topic, cluster):
+        reasons.append("unsupported_claim")
+    if is_generic_why_line(why_line):
+        reasons.append("generic_why_it_matters")
+    if has_headline_only_support(topic):
+        reasons.append("headline_only_support")
+    if len(topic.video_plan.scenes) >= 2 and scene_progression_score(topic.video_plan.scenes) < 0.42:
+        reasons.append("weak_scene_progression")
+    if has_low_information_anchors(topic):
+        reasons.append("low_information_anchors")
+    if has_speculative_story(topic, cluster):
+        reasons.append("speculative_story")
+    if has_mixed_language_copy(topic):
+        reasons.append("mixed_language_copy")
+    if has_generic_asset_only(topic):
+        reasons.append("generic_asset_only")
+    if has_missing_domain_fact_pack(topic, cluster):
+        reasons.append("missing_domain_fact_pack")
+    if has_missing_numeric_impact(topic, cluster):
+        reasons.append("missing_numeric_impact")
+    if has_missing_institutional_context(topic, cluster):
+        reasons.append("missing_institutional_context")
+    if has_missing_sports_result_context(topic, cluster):
+        reasons.append("missing_sports_result_context")
+
+    deduped_reasons = tuple(
+        reason
+        for reason in dict.fromkeys(reasons)
+        if reason in VALID_VIDEO_REVIEW_REASONS
+    )
+    score = max(
+        0,
+        min(
+            100,
+            100 - sum(VIDEO_QUALITY_DEDUCTIONS.get(reason, 0) for reason in deduped_reasons),
+        ),
+    )
+    if any(reason in HARD_VIDEO_REJECT_REASONS for reason in deduped_reasons):
+        return "reject", score, deduped_reasons
+    review_floor_reasons = {
+        "generic_why_it_matters",
+        "headline_only_support",
+        "weak_scene_progression",
+        "speculative_story",
+        "mixed_language_copy",
+        "generic_asset_only",
+        "missing_domain_fact_pack",
+        "missing_numeric_impact",
+        "missing_institutional_context",
+        "missing_sports_result_context",
+    }
+    if any(reason in review_floor_reasons for reason in deduped_reasons) and score >= 85:
+        score = 84
+    if score >= 85:
+        return "publishable", score, deduped_reasons
+    if score >= 55:
+        return "review", score, deduped_reasons
+    return "reject", score, deduped_reasons
+
+
+def effective_prompt_visibility_status(entry: TopicAnalysisEntry) -> str:
+    if entry.video_quality_status == "reject":
+        return "reject"
+    if entry.quality_status == "review" or entry.video_quality_status == "review":
+        return "review"
+    return "publishable"
+
+
 def build_latest_feedback(record: TopicFeedback) -> TopicLatestFeedback:
     return TopicLatestFeedback(
         label=record.feedback_label,
@@ -1132,19 +2052,6 @@ def tuning_weight_delta(lift: float) -> float:
     if lift <= -0.10:
         return -0.02
     return 0.0
-
-
-def build_why_it_matters_line(category: str) -> str:
-    mapping = {
-        "sports": "The result can shape the momentum heading into the next game.",
-        "business": "The move could influence near-term market expectations.",
-        "science": "The development could shape the next phase of research or missions.",
-        "technology": "The next product or policy response could quickly shift the story.",
-        "world": "The next official response will shape how the situation develops.",
-        "politics": "The next official response will determine the immediate political impact.",
-        "general": "The next confirmed update will likely shape where the story goes next.",
-    }
-    return mapping.get(category, mapping["general"])
 
 
 def classify_story_complexity(summary: str, key_points: list[str]) -> str:
@@ -1223,6 +2130,93 @@ def dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(key)
         result.append(normalized)
     return result
+
+
+def extract_lead_sentences(
+    value: str | None,
+    *,
+    title: str = "",
+    max_sentences: int = 3,
+    max_chars: int = CLUSTER_TEXT_CHAR_LIMIT,
+) -> str:
+    cleaned = compact_text(value)
+    if not cleaned:
+        return ""
+
+    normalized_title = normalize_title(title)
+    selected: list[str] = []
+    for sentence in split_sentences(cleaned):
+        normalized_sentence = compact_text(sentence)
+        if not normalized_sentence:
+            continue
+        if normalized_title and SequenceMatcher(
+            None,
+            normalize_title(normalized_sentence),
+            normalized_title,
+        ).ratio() >= 0.94:
+            continue
+        if selected and SequenceMatcher(None, selected[-1].lower(), normalized_sentence.lower()).ratio() >= 0.92:
+            continue
+
+        candidate = " ".join([*selected, normalized_sentence]).strip()
+        if len(candidate) > max_chars and selected:
+            break
+        if len(candidate) > max_chars:
+            selected.append(truncate_text(normalized_sentence, max_chars))
+            break
+
+        selected.append(normalized_sentence)
+        if len(selected) >= max_sentences:
+            break
+
+    if not selected:
+        return truncate_text(cleaned, max_chars)
+    return truncate_text(" ".join(selected), max_chars)
+
+
+def build_detail_text(article: Article) -> str:
+    content_text = strip_detail_boilerplate(article.content_text)
+    if content_text:
+        detail = extract_lead_sentences(
+            content_text,
+            title=article.title,
+            max_sentences=5,
+            max_chars=settings.ANALYSIS_TEXT_CHAR_LIMIT,
+        )
+        return detail or truncate_text(content_text, settings.ANALYSIS_TEXT_CHAR_LIMIT)
+
+    content_snippet = strip_detail_boilerplate(article.content_snippet)
+    if content_snippet:
+        return truncate_text(content_snippet, settings.ANALYSIS_TEXT_CHAR_LIMIT)
+
+    summary = strip_detail_boilerplate(article.summary)
+    if summary:
+        return truncate_text(summary, settings.ANALYSIS_TEXT_CHAR_LIMIT)
+
+    return compact_text(article.title)
+
+
+def build_cluster_text(article: Article) -> str:
+    content_snippet = strip_detail_boilerplate(article.content_snippet)
+    if content_snippet:
+        return truncate_text(content_snippet, CLUSTER_TEXT_CHAR_LIMIT)
+
+    content_text = strip_detail_boilerplate(article.content_text)
+    if content_text:
+        lead = extract_lead_sentences(
+            content_text,
+            title=article.title,
+            max_sentences=3,
+            max_chars=CLUSTER_TEXT_CHAR_LIMIT,
+        )
+        if lead:
+            return lead
+
+    summary = strip_detail_boilerplate(article.summary)
+    if summary:
+        return truncate_text(summary, CLUSTER_TEXT_CHAR_LIMIT)
+
+    return truncate_text(compact_text(article.title), CLUSTER_TEXT_CHAR_LIMIT)
 
 
 def extract_score(values: list[str]) -> str:
@@ -1341,6 +2335,165 @@ def build_prompt_entities(
         "top_key_point": truncate_for_prompt(key_points[0], 96) if key_points else "",
         "supporting_key_points": [truncate_for_prompt(point, 96) for point in key_points[1:3]],
     }
+
+
+def extract_numeric_phrases(values: list[str], *, max_items: int = 4) -> list[str]:
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        compacted_value = compact_text(value)
+        if not compacted_value:
+            continue
+        score = extract_score([compacted_value])
+        if score:
+            normalized_score = score.replace(" ", "")
+            if normalized_score.lower() not in seen:
+                seen.add(normalized_score.lower())
+                phrases.append(normalized_score)
+        for match in re.finditer(
+            r"(\$\d[\d,]*(?:\.\d+)?(?:\s*(?:per month|monthly|lifetime))?|\d+(?:\.\d+)?%|\+\$\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:points|rebounds|assists|seed|sales))",
+            compacted_value,
+            flags=re.IGNORECASE,
+        ):
+            candidate = compact_text(match.group(0))
+            lowered = candidate.lower()
+            if not candidate or lowered in seen:
+                continue
+            seen.add(lowered)
+            phrases.append(candidate)
+            if len(phrases) >= max_items:
+                return phrases
+    return phrases
+
+
+def choose_supporting_fact(
+    sentences: list[str],
+    *,
+    headline: str,
+    category: str,
+) -> str:
+    best_candidate = ""
+    best_score = float("-inf")
+    for sentence in sentences:
+        candidate = clean_viewer_text(sentence, max_sentences=1, max_chars=150)
+        if not candidate or is_generic_why_line(candidate):
+            continue
+        if text_similarity(candidate, headline) >= 0.84:
+            continue
+        score = len(tokenize(candidate, max_tokens=30)) / 12.0
+        lowered = candidate.lower()
+        if category == "business" and text_contains_any_hint(lowered, BUSINESS_NUMERIC_HINTS):
+            score += 0.5
+        if category in {"world", "politics", "general", "business"} and text_contains_any_hint(lowered, INSTITUTIONAL_CONTEXT_HINTS):
+            score += 0.25
+        if category == "sports" and (extract_score([candidate]) or text_contains_any_hint(lowered, SPORTS_RESULT_HINTS)):
+            score += 0.45
+        if extract_numeric_phrases([candidate]):
+            score += 0.35
+        if text_contains_any_hint(lowered, ("because", "after", "means", "would", "could", "will")):
+            score += 0.12
+        if score > best_score:
+            best_candidate = candidate
+            best_score = score
+    return best_candidate
+
+
+def choose_impact_fact(
+    sentences: list[str],
+    *,
+    headline: str,
+    summary: str,
+    key_points: list[str],
+    category: str,
+    cluster: list[PreparedArticle],
+) -> str:
+    candidate = build_why_it_matters_line(
+        category,
+        headline=headline,
+        summary=summary,
+        key_points=key_points,
+        cluster=cluster,
+    )
+    if candidate and text_similarity(candidate, headline) < 0.9:
+        return candidate
+    return choose_supporting_fact(sentences, headline=headline, category=category)
+
+
+def select_institution_from_values(values: list[str]) -> str:
+    for value in values:
+        compacted_value = compact_text(value)
+        if not compacted_value:
+            continue
+        named_phrases = extract_named_phrases([compacted_value], max_items=4)
+        for phrase in named_phrases:
+            lowered = phrase.lower()
+            if text_contains_any_hint(lowered, INSTITUTIONAL_CONTEXT_HINTS):
+                return phrase
+        lowered_value = compacted_value.lower()
+        for hint in INSTITUTIONAL_CONTEXT_HINTS:
+            if text_contains_hint(lowered_value, hint):
+                return hint.title()
+    return ""
+
+
+def build_story_fact_pack(
+    cluster: list[PreparedArticle],
+    *,
+    category: str,
+    headline: str,
+    summary: str,
+    key_points: list[str],
+) -> StoryFactPack:
+    values = [headline, summary, *key_points]
+    detail_sentences = [
+        sentence
+        for item in cluster
+        for sentence in split_sentences(item.detail_text)
+        if compact_text(sentence)
+    ]
+    prompt_entities = build_prompt_entities(
+        cluster,
+        headline=headline,
+        summary=summary,
+        key_points=key_points,
+    )
+    numeric_facts = tuple(extract_numeric_phrases(values + [item.detail_text for item in cluster]))
+    actors = tuple(filter_informative_anchors(prompt_entities["names"], headline=headline, max_items=5))
+    institution = select_institution_from_values(values + [item.detail_text for item in cluster[:2]])
+    result_context = ""
+    if category == "sports":
+        for sentence in detail_sentences:
+            lowered = sentence.lower()
+            if extract_score([sentence]) or text_contains_any_hint(lowered, SPORTS_RESULT_HINTS):
+                result_context = clean_viewer_text(sentence, max_sentences=1, max_chars=130)
+                break
+    primary_event = clean_viewer_text(headline, max_sentences=1, max_chars=88) or clean_viewer_text(summary, max_sentences=1, max_chars=120)
+    supporting_fact = choose_supporting_fact(detail_sentences + values, headline=headline, category=category)
+    impact_fact = choose_impact_fact(
+        detail_sentences + values,
+        headline=headline,
+        summary=summary,
+        key_points=key_points,
+        category=category,
+        cluster=cluster,
+    )
+    cluster_editorial_type = "report"
+    for editorial_type in ("segment_teaser", "related_links_page", "video_page", "live_blog", "teaser_roundup", "speculative", "analysis"):
+        if any(item.editorial_type == editorial_type for item in cluster):
+            cluster_editorial_type = editorial_type
+            break
+    return StoryFactPack(
+        primary_event=primary_event,
+        supporting_fact=supporting_fact,
+        impact_fact=impact_fact,
+        numeric_facts=numeric_facts,
+        actors=actors,
+        institution=institution,
+        result_context=result_context,
+        uncertainty_level="speculative" if cluster_editorial_type in SPECULATIVE_EDITORIAL_TYPES else "confirmed",
+        story_language=dominant_story_language(cluster),
+        editorial_type=cluster_editorial_type,
+    )
 
 
 def is_comparison_story(
@@ -1507,54 +2660,20 @@ async def get_recent_articles_for_analysis(
     return list(result.scalars().all())
 
 
-async def extract_article_text(
-    url: str,
-    client: httpx.AsyncClient,
-    cache: dict[str, str],
-) -> str:
-    if url in cache:
-        return cache[url]
-
-    try:
-        response = await client.get(url)
-        response.raise_for_status()
-        extracted = trafilatura.extract(
-            response.text,
-            output_format="txt",
-            include_comments=False,
-            include_tables=False,
-        )
-        cache[url] = compact_text(extracted)[: settings.ANALYSIS_TEXT_CHAR_LIMIT]
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("Article body extraction failed for %s: %s", url, exc)
-        cache[url] = ""
-
-    return cache[url]
-
-
 async def build_prepared_articles(
     articles: list[Article],
     *,
     category_filter: str | None = None,
 ) -> PreparedArticlesResult:
-    text_cache: dict[str, str] = {}
-
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(15.0, connect=5.0),
-        headers={"User-Agent": settings.USER_AGENT},
-        follow_redirects=True,
-    ) as client:
-        prepared = await asyncio.gather(
-            *[
-                _build_prepared_article(
-                    article,
-                    client=client,
-                    cache=text_cache,
-                    category_filter=category_filter,
-                )
-                for article in articles
-            ]
-        )
+    prepared = await asyncio.gather(
+        *[
+            _build_prepared_article(
+                article,
+                category_filter=category_filter,
+            )
+            for article in articles
+        ]
+    )
 
     prepared_articles: list[PreparedArticle] = []
     rejections: list[AnalysisRejection] = []
@@ -1573,8 +2692,6 @@ async def build_prepared_articles(
 async def _build_prepared_article(
     article: Article,
     *,
-    client: httpx.AsyncClient,
-    cache: dict[str, str],
     category_filter: str | None,
 ) -> PreparedArticle | AnalysisRejection | None:
     normalized_category = normalize_analysis_category(article.category, article.source_category)
@@ -1583,9 +2700,18 @@ async def _build_prepared_article(
 
     timestamp = get_article_timestamp(article)
     source_rules = parse_source_analysis_rules(article.source if hasattr(article, "source") else None)
+    detail_text = build_detail_text(article)
+    cluster_text = build_cluster_text(article)
+    story_language = detect_text_language(
+        " ".join([detail_text, cluster_text, article.title, article.summary or ""]),
+        fallback=compact_text(article.language) or "en",
+    )
+    editorial_type = classify_editorial_type(article, detail_text=detail_text)
     rejection_reason = article_eligibility_reason(
         article,
         timestamp=timestamp,
+        detail_text=detail_text,
+        editorial_type=editorial_type,
         rules=source_rules,
     )
     if rejection_reason:
@@ -1598,24 +2724,23 @@ async def _build_prepared_article(
             source_name=article.source.name if article.source else "Unknown Source",
         )
 
-    base_text = compact_text(article.summary) or compact_text(article.content_snippet)
-    if not base_text:
-        base_text = await extract_article_text(article.url, client, cache)
-
-    analysis_text = base_text[: settings.ANALYSIS_TEXT_CHAR_LIMIT] if base_text else article.title
     source_name = article.source.name if article.source else "Unknown Source"
     source_slug = article.source.slug if article.source else "unknown"
 
     return PreparedArticle(
         article=article,
         normalized_category=normalized_category,
-        analysis_text=analysis_text,
+        cluster_text=cluster_text,
+        detail_text=detail_text,
+        editorial_type=editorial_type,
+        story_language=story_language,
+        uncertainty_level=classify_uncertainty_level(editorial_type),
         timestamp=timestamp,
         source_name=source_name,
         source_slug=source_slug,
         tag_tokens={compact_text(str(tag)).lower() for tag in (article.tags or []) if compact_text(str(tag))},
         title_tokens=tokenize(article.title),
-        text_tokens=tokenize(analysis_text, max_tokens=80),
+        text_tokens=tokenize(cluster_text, max_tokens=80),
     )
 
 
@@ -1753,17 +2878,28 @@ class OllamaTopicAnalyzer:
         return [topic for topic in topics if isinstance(topic, dict)]
 
     def _build_prompt(self, cluster: list[PreparedArticle], visual_assets: list[VisualAsset]) -> str:
+        story_language = dominant_story_language(cluster)
+        editorial_type = build_story_fact_pack(
+            cluster,
+            category=cluster[0].normalized_category if cluster else "general",
+            headline=cluster[0].article.title if cluster else "",
+            summary=cluster[0].detail_text if cluster else "",
+            key_points=[item.article.title for item in cluster[:2]],
+        ).editorial_type
         articles_payload = [
             {
                 "article_id": str(item.article.id),
                 "source_name": item.source_name,
                 "source_slug": item.source_slug,
+                "story_language": item.story_language,
+                "editorial_type": item.editorial_type,
                 "published_at": item.timestamp.isoformat(),
                 "category": item.normalized_category,
                 "title": item.article.title,
                 "image_url": item.article.image_url,
                 "tags": sorted(item.tag_tokens),
-                "analysis_text": item.analysis_text[:700],
+                "cluster_text": item.cluster_text[: CLUSTER_TEXT_CHAR_LIMIT],
+                "detail_text": item.detail_text[: settings.ANALYSIS_TEXT_CHAR_LIMIT],
             }
             for item in cluster
         ]
@@ -1781,10 +2917,10 @@ class OllamaTopicAnalyzer:
             "topics": [
                 {
                     "article_ids": ["uuid"],
-                    "headline_tr": "Kısa ve çarpıcı Türkçe başlık, 12 kelimeyi geçmesin",
-                    "summary_tr": "2-3 cümle Türkçe özet, ne oldu kısa ve net",
-                    "key_points_tr": ["Ana gelişme 1", "Gelişme 2", "Gelişme 3"],
-                    "why_it_matters_tr": "Neden önemli, 1 cümle",
+                    "headline_tr": "Short headline in the dominant story language, max 12 words",
+                    "summary_tr": "2-3 short viewer-facing sentences in the dominant story language",
+                    "key_points_tr": ["Concrete fact 1", "Fact 2", "Fact 3"],
+                    "why_it_matters_tr": "One concrete implication in the dominant story language",
                     "confidence": 0.84,
                     "video_prompt_en": "English creative brief for video production",
                     "video_prompt_parts": {
@@ -1835,7 +2971,12 @@ class OllamaTopicAnalyzer:
             "Group only articles that describe the same concrete event or development.\n"
             "If the candidate cluster actually contains different stories, split it into separate topics.\n"
             "Do not include groups backed by fewer than two unique sources.\n"
-            "Write headline_tr, summary_tr, key_points_tr, and why_it_matters_tr in Turkish.\n"
+            "Never use teaser, roundup, related-links, replay, show, segment, or video-page copy as the main story.\n"
+            "Use detail_text as the main article context when writing the topic and video outputs.\n"
+            "Use cluster_text only as a short lead or quick comparison aid; do not let it override detail_text.\n"
+            f"Write headline_tr, summary_tr, key_points_tr, and why_it_matters_tr in the dominant story language for this cluster ({story_language}).\n"
+            "Do not mix languages inside viewer-facing copy.\n"
+            "Preserve uncertainty. If the coverage is speculative, keep words like could, possible, linked, or expected rather than rewriting them as certainty.\n"
             "Write video_prompt_en, video_prompt_parts, and video_plan in English.\n\n"
             "CRITICAL — video_plan:\n"
             "- This is the actual master-video plan that another renderer will follow.\n"
@@ -1847,6 +2988,8 @@ class OllamaTopicAnalyzer:
             "- Do not add extra scenes just to force a hook/explain/takeaway structure.\n"
             "- Only show information directly related to the topic. Do not overload the viewer.\n"
             "- Each scene must add a genuinely new piece of information or a new visual perspective.\n"
+            "- If no new fact exists for scene 2, keep the video to one scene.\n"
+            "- Never put ellipses or visibly truncated copy in scene headlines or bodies.\n"
             "- Choose purpose values from: hook, explain, detail, context, comparison, takeaway, close.\n"
             "- Choose layout_hint values from: headline, split, stat, timeline, quote, comparison, minimal, full-bleed.\n"
             "- source_visibility should be none, subtle, or contextual.\n"
@@ -1859,8 +3002,10 @@ class OllamaTopicAnalyzer:
             "CRITICAL — video_prompt_en:\n"
             "- This is a creative brief for humans, not the literal on-screen text.\n"
             "- It should describe the tone, look, motion language, and editorial intent of the master video.\n\n"
-            "For sports, mention score and decisive player or moment. For business, mention trigger and visible impact. "
-            "For world/general news, emphasize event sequence and immediate public implication.\n"
+            f"Cluster editorial type: {editorial_type}.\n"
+            "For sports, mention result, decisive player/moment, or concrete transfer context. "
+            "For business, mention trigger and visible impact, ideally with at least one number. "
+            "For politics/law/general policy, mention institution, action, and practical consequence.\n"
             "Return JSON only. Follow this shape exactly:\n"
             f"{json.dumps(schema, ensure_ascii=True)}\n"
             "If no shared story exists, return {\"topics\": []}.\n"
@@ -1894,6 +3039,13 @@ def build_contextual_prompt_parts(
     key_points: list[str],
     why_it_matters: str,
 ) -> VideoPromptParts:
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=category,
+        headline=headline,
+        summary=summary,
+        key_points=key_points,
+    )
     entities = build_prompt_entities(
         cluster,
         headline=headline,
@@ -1908,7 +3060,7 @@ def build_contextual_prompt_parts(
     numeric_phrase = entities["numeric_phrase"]
     top_key_point = entities["top_key_point"] or truncate_for_prompt(summary, 96)
     supporting_key_points = entities["supporting_key_points"]
-    focus_names = entities["names"]
+    focus_names = list(fact_pack.actors) or entities["names"]
     source_rules = cluster_analysis_rules(cluster)
     representative_url = cluster[0].article.url if cluster else ""
     comparison_story = is_comparison_story(
@@ -1951,7 +3103,7 @@ def build_contextual_prompt_parts(
             format_hint = "Premium broadcast-meets-kinetic-typography sports short"
             story_angle = (
                 f"Turn {matchup or truncate_for_prompt(headline, 72)} into a sharp, emotionally readable sports moment"
-                f"{f' with the {score} result visible throughout' if score else ''}"
+                f"{f' with the {score} result visible throughout' if score else (f' with {fact_pack.result_context}' if fact_pack.result_context else '')}"
                 f"{f' and {focus_entity} framed as the decisive figure' if focus_entity else ''}."
             )
             visual_brief = (
@@ -1993,9 +3145,11 @@ def build_contextual_prompt_parts(
                     f"Tell {truncate_for_prompt(headline, 76)} as a short, human sports update"
                     f"{f' centered on {focus_entity}' if focus_entity else ''}, without forcing a matchup or scoreboard framing."
                 )
-            story_angle = (
-                story_angle
-            )
+            if fact_pack.uncertainty_level == "speculative":
+                story_angle = (
+                    f"Treat {truncate_for_prompt(headline, 76)} as a speculative sports update, keeping all on-screen language clearly uncertain"
+                    f"{f' and centered on {focus_entity}' if focus_entity else ''}."
+                )
             visual_brief = (
                 "Use a strong athlete or coach portrait, editorial sports typography, subtle stadium texture, and one clean hero-image-led composition. "
                 "It should feel fast and premium, but calmer and more personal than a match recap."
@@ -2006,7 +3160,7 @@ def build_contextual_prompt_parts(
             transition_style = "Soft light wipes, subtle punch-ins, and clean editorial fades."
             scene_sequence = [
                 f"Open on a strong portrait or training visual with the headline {truncate_for_prompt(headline, 58)}.",
-                f"Add one short support beat that explains the update clearly: {top_key_point}.",
+                f"Add one short support beat that explains the update clearly: {truncate_for_prompt(fact_pack.supporting_fact or top_key_point, 96)}.",
                 "Only add a final beat if it introduces genuinely new context, otherwise let the first image and headline carry the story.",
             ]
             design_keywords = ["editorial sports", "hero portrait", "clean typography", "subtle stadium texture", "calm motion"]
@@ -2014,6 +3168,7 @@ def build_contextual_prompt_parts(
             ([matchup] if matchup else [])
             + ([score] if score else [])
             + ([focus_entity] if focus_entity else [])
+            + list(fact_pack.numeric_facts[:2])
             + representative_titles[:2]
         )
         tone = "High-energy, premium, and emotionally clear"
@@ -2022,7 +3177,7 @@ def build_contextual_prompt_parts(
             format_hint = "Editorial financial explainer with premium motion graphics"
             story_angle = (
                 f"Frame {truncate_for_prompt(headline, 78)} as a crisp market narrative with one clear trigger and one clear consequence"
-                f"{f', centering {numeric_phrase} as the most visible data point' if numeric_phrase else ''}."
+                f"{f', centering {numeric_phrase or (fact_pack.numeric_facts[0] if fact_pack.numeric_facts else '')} as the most visible data point' if (numeric_phrase or fact_pack.numeric_facts) else ''}."
             )
             visual_brief = (
                 "Use elegant dark-finance UI panels, glowing charts, restrained glass surfaces, and clean directional arrows. "
@@ -2032,8 +3187,8 @@ def build_contextual_prompt_parts(
             transition_style = "Glass panel wipes, soft chart morphs, ticker pulls, and clean numeric snap-ins."
             scene_sequence = [
                 "Open with a single commanding market card that states the move and the tension immediately.",
-                f"Show the trigger and the reaction as a clear visual chain, led by: {top_key_point}.",
-                f"Close on a poised outlook board hinting at what traders or observers watch next: {truncate_for_prompt(why_it_matters, 96)}.",
+                f"Show the trigger and the reaction as a clear visual chain, led by: {truncate_for_prompt(fact_pack.supporting_fact or top_key_point, 96)}.",
+                f"Close on a poised outlook board hinting at what traders or observers watch next: {truncate_for_prompt(fact_pack.impact_fact or why_it_matters, 96)}.",
             ]
             design_keywords = ["glassmorphism", "market UI", "chart glow", "directional arrows", "editorial finance"]
             tone = "Analytical, premium, and composed"
@@ -2051,13 +3206,16 @@ def build_contextual_prompt_parts(
             transition_style = "Editorial panel slides, crisp fades, and minimal stat reveals."
             scene_sequence = [
                 "Open with the key business development in one clean headline panel.",
-                f"Add the clearest supporting detail with a labeled explainer card: {top_key_point}.",
-                f"Close on the practical implication or next decision to watch: {truncate_for_prompt(why_it_matters, 96)}.",
+                f"Add the clearest supporting detail with a labeled explainer card: {truncate_for_prompt(fact_pack.supporting_fact or top_key_point, 96)}.",
+                f"Close on the practical implication or next decision to watch: {truncate_for_prompt(fact_pack.impact_fact or why_it_matters, 96)}.",
             ]
             design_keywords = ["editorial business", "clean panels", "newsroom typography", "restrained motion", "clear labels"]
             tone = "Clear, premium, and informative"
         must_include = dedupe_preserve_order(
-            focus_names[:2] + ([numeric_phrase] if numeric_phrase and story_subtype == "market" else []) + representative_titles[:2]
+            focus_names[:2]
+            + list(fact_pack.numeric_facts[:2])
+            + ([numeric_phrase] if numeric_phrase and story_subtype == "market" else [])
+            + representative_titles[:2]
         )
     elif category == "science":
         format_hint = "Cinematic editorial science explainer"
@@ -2090,11 +3248,16 @@ def build_contextual_prompt_parts(
         transition_style = "Editorial wipes, iris reveals, typography pushes, and restrained whip transitions."
         scene_sequence = [
             "Open with the main development and the most important actor or location in one bold headline panel.",
-            f"Lay out the event sequence in two or three factual cards, anchored by: {top_key_point}.",
-            f"Close with the immediate implication and what to watch next, staying human and clear: {truncate_for_prompt(why_it_matters, 96)}.",
+            f"Lay out the event sequence in two or three factual cards, anchored by: {truncate_for_prompt(fact_pack.supporting_fact or top_key_point, 96)}.",
+            f"Close with the immediate implication and what to watch next, staying human and clear: {truncate_for_prompt(fact_pack.impact_fact or why_it_matters, 96)}.",
         ]
         design_keywords = ["editorial typography", "news texture", "headline cards", "measured motion", "documentary framing"]
-        must_include = dedupe_preserve_order(focus_names[:3] + supporting_key_points[:1] + representative_titles[:2])
+        must_include = dedupe_preserve_order(
+            focus_names[:3]
+            + ([fact_pack.institution] if fact_pack.institution else [])
+            + supporting_key_points[:1]
+            + representative_titles[:2]
+        )
         tone = "Urgent, human, and highly legible"
     else:
         format_hint = "Modern motion-graphics explainer"
@@ -2125,6 +3288,8 @@ def build_contextual_prompt_parts(
         "Claims not supported by the summary",
     ]
 
+    fallback_must_include = filter_informative_anchors(representative_titles[:3], headline=headline, max_items=3)
+
     return VideoPromptParts(
         format_hint=format_hint,
         story_angle=story_angle,
@@ -2134,7 +3299,7 @@ def build_contextual_prompt_parts(
         scene_sequence=scene_sequence[:4],
         tone=tone,
         design_keywords=design_keywords[:6],
-        must_include=must_include[:5] or representative_titles[:3],
+        must_include=filter_informative_anchors(must_include, headline=headline, max_items=5) or fallback_must_include,
         avoid=avoid,
         duration_seconds=duration_seconds,
     )
@@ -2435,6 +3600,13 @@ def build_fallback_video_plan(
     prompt_parts: VideoPromptParts,
     visual_assets: list[VisualAsset],
 ) -> VideoPlan:
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=category,
+        headline=headline,
+        summary=summary,
+        key_points=key_points,
+    )
     entities = build_prompt_entities(
         cluster,
         headline=headline,
@@ -2442,22 +3614,38 @@ def build_fallback_video_plan(
         key_points=key_points,
     )
     source_names = unique_source_names(cluster)
-    clean_headline = trim_words(
+    clean_headline = trim_viewer_words(
         clean_viewer_text(headline, source_names=source_names, max_sentences=1, max_chars=88) or headline,
         10,
     )
     clean_summary = clean_viewer_text(summary, source_names=source_names, max_sentences=2, max_chars=150)
     clean_points = clean_viewer_points(key_points, source_names=source_names, max_items=2, max_chars=88)
-    clean_why = clean_viewer_text(
+    clean_why_candidate = clean_viewer_text(
         why_it_matters,
         source_names=source_names,
         max_sentences=1,
         max_chars=120,
-    ) or build_why_it_matters_line(category)
+    )
+    clean_why = (
+        clean_why_candidate
+        if clean_why_candidate and not is_generic_why_line(clean_why_candidate)
+        else build_why_it_matters_line(
+            category,
+            headline=clean_headline,
+            summary=clean_summary or summary,
+            key_points=clean_points,
+            cluster=cluster,
+        )
+    )
     source_rules = cluster_analysis_rules(cluster)
     representative_url = cluster[0].article.url if cluster else ""
-    key_figures = entities["names"][:4]
-    key_data = entities["score"] or entities["numeric_phrase"] or ""
+    key_figures = filter_informative_anchors(list(fact_pack.actors) or entities["names"], headline=clean_headline, max_items=4)
+    key_data = (
+        entities["score"]
+        or (fact_pack.numeric_facts[0] if fact_pack.numeric_facts else "")
+        or entities["numeric_phrase"]
+        or ""
+    )
     comparison_story = is_comparison_story(
         category=category,
         headline=clean_headline,
@@ -2505,7 +3693,7 @@ def build_fallback_video_plan(
             duration_seconds=scene_durations[0],
             layout_hint=hook_layout,
             headline=clean_headline,
-            body=clean_summary,
+            body=clean_summary or fact_pack.primary_event,
             supporting_points=[],
             key_figures=key_figures[:3],
             key_data=key_data,
@@ -2522,7 +3710,16 @@ def build_fallback_video_plan(
         )
     )
 
-    if scene_count >= 2:
+    explain_candidate = next(
+        (
+            candidate
+            for candidate in [fact_pack.supporting_fact, *clean_points, clean_why]
+            if candidate and text_similarity(candidate, clean_headline) < 0.72
+        ),
+        "",
+    )
+
+    if scene_count >= 2 and explain_candidate:
         explain_layout = default_layout_for_scene(
             category=category,
             purpose="explain",
@@ -2531,14 +3728,15 @@ def build_fallback_video_plan(
             comparison_story=comparison_story,
             has_visual_assets=bool(visual_assets),
         )
-        explain_headline = trim_words(
-            clean_points[0] if clean_points else (clean_why if clean_why.lower() != clean_headline.lower() else clean_summary),
-            10,
-        )
+        explain_headline = trim_viewer_words(explain_candidate, 10)
         explain_body = (
-            clean_points[1]
-            if len(clean_points) > 1
-            else (clean_why if clean_why.lower() != clean_summary.lower() else "")
+            fact_pack.result_context
+            if fact_pack.result_context and text_similarity(fact_pack.result_context, explain_headline) < 0.88
+            else (
+                clean_points[1]
+                if len(clean_points) > 1 and text_similarity(clean_points[1], explain_headline) < 0.88
+                else (clean_why if text_similarity(clean_why, clean_summary) < 0.88 else "")
+            )
         )
         scenes.append(
             VideoPlanScene(
@@ -2564,7 +3762,8 @@ def build_fallback_video_plan(
             )
         )
 
-    if scene_count >= 3:
+    impact_candidate = fact_pack.impact_fact or clean_why
+    if scene_count >= 3 and impact_candidate and text_similarity(impact_candidate, clean_headline) < 0.72:
         takeaway_layout = default_layout_for_scene(
             category=category,
             purpose="takeaway",
@@ -2579,8 +3778,8 @@ def build_fallback_video_plan(
                 purpose="takeaway",
                 duration_seconds=scene_durations[2],
                 layout_hint=takeaway_layout,
-                headline=trim_words(clean_why, 10),
-                body=clean_why,
+                headline=trim_viewer_words(impact_candidate, 10),
+                body=impact_candidate,
                 supporting_points=[],
                 key_figures=key_figures[:2],
                 key_data="",
@@ -2617,7 +3816,7 @@ def build_fallback_video_plan(
     ]
 
     return VideoPlan(
-        title=truncate_text(clean_headline, 88),
+        title=truncate_viewer_text(clean_headline, 88),
         audience_mode="sound_off_first",
         master_format="16:9",
         duration_seconds=duration_seconds,
@@ -2686,7 +3885,7 @@ def coerce_video_plan(
             continue
         purpose = compact_text(str(item.get("purpose", ""))).lower()
         layout_hint = compact_text(str(item.get("layout_hint", ""))).lower()
-        headline_value = trim_words(
+        headline_value = trim_viewer_words(
             clean_viewer_text(
                 str(item.get("headline", "")),
                 source_names=source_names,
@@ -2720,7 +3919,11 @@ def coerce_video_plan(
                 headline=headline_value,
                 body=body_value,
                 supporting_points=supporting_points,
-                key_figures=coerce_list(item.get("key_figures"))[:4],
+                key_figures=filter_informative_anchors(
+                    coerce_list(item.get("key_figures")),
+                    headline=headline_value,
+                    max_items=4,
+                ),
                 key_data=compact_text(str(item.get("key_data", ""))),
                 visual_direction=compact_text(str(item.get("visual_direction", ""))),
                 motion_direction=compact_text(str(item.get("motion_direction", ""))),
@@ -2807,9 +4010,11 @@ def build_video_content_from_plan(plan: VideoPlan) -> VideoContent:
             if compact_text(scene.body or scene.headline)
         ]
     )[:3]
-    key_figures = dedupe_preserve_order(
-        [figure for scene in plan.scenes for figure in scene.key_figures]
-    )[:4]
+    key_figures = filter_informative_anchors(
+        dedupe_preserve_order([figure for scene in plan.scenes for figure in scene.key_figures]),
+        headline=plan.title,
+        max_items=4,
+    )
     key_data = next((compact_text(scene.key_data) for scene in plan.scenes if compact_text(scene.key_data)), "")
 
     return VideoContent(
@@ -2882,6 +4087,26 @@ def build_remotion_storyboard_context(
         video_content=build_video_content_from_plan(video_plan),
         visual_assets=visual_assets,
     )
+
+
+def prepared_summary_candidate(item: PreparedArticle) -> str:
+    return compact_text(item.detail_text) or compact_text(item.cluster_text) or compact_text(item.article.title)
+
+
+def prepared_key_point_candidate(item: PreparedArticle) -> str:
+    title = compact_text(item.article.title)
+    if title and not looks_broken_title(title):
+        return title
+
+    detail_line = extract_lead_sentences(
+        item.detail_text or item.cluster_text,
+        title=item.article.title,
+        max_sentences=1,
+        max_chars=96,
+    )
+    return detail_line or title or compact_text(item.cluster_text) or compact_text(item.article.title)
+
+
 def build_fallback_topic(
     cluster: list[PreparedArticle],
     visual_assets: list[VisualAsset],
@@ -2897,16 +4122,23 @@ def build_fallback_topic(
     representative = cluster[0]
     category = representative.normalized_category
     source_names = unique_sources
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=category,
+        headline=representative.article.title,
+        summary=prepared_summary_candidate(representative),
+        key_points=[item.article.title for item in cluster[:2]],
+    )
 
     # Pick the shortest, most direct title as headline
     titles = [item.article.title for item in cluster if item.article.title]
     headline_tr = clean_viewer_text(min(titles, key=len) if titles else representative.article.title, source_names=source_names, max_sentences=1, max_chars=88)
-    headline_tr = trim_words(headline_tr or representative.article.title, 10)
+    headline_tr = trim_viewer_words(headline_tr or representative.article.title, 10)
 
     cleaned_summaries = dedupe_preserve_order(
         [
             clean_viewer_text(
-                compact_text(item.article.summary) or compact_text(item.article.title),
+                prepared_summary_candidate(item),
                 source_names=source_names,
                 max_sentences=1,
                 max_chars=140,
@@ -2917,12 +4149,18 @@ def build_fallback_topic(
     summary_tr = " ".join(cleaned_summaries[:2]) or headline_tr
 
     key_points_tr = clean_viewer_points(
-        [item.article.title for item in cluster[:3]],
+        [prepared_key_point_candidate(item) for item in cluster[:3]],
         source_names=source_names,
         max_items=2,
         max_chars=96,
     )
-    why_it_matters_tr = build_why_it_matters_line(category)
+    why_it_matters_tr = build_why_it_matters_line(
+        category,
+        headline=headline_tr,
+        summary=summary_tr,
+        key_points=key_points_tr,
+        cluster=cluster,
+    )
 
     prompt_parts = build_fallback_prompt_parts(
         cluster,
@@ -2970,6 +4208,8 @@ def build_fallback_topic(
         topic_id=build_topic_id(cluster),
         category=category,
         aggregation_type=aggregation_type,
+        story_language=fact_pack.story_language,
+        editorial_type=fact_pack.editorial_type,
         headline_tr=headline_tr,
         summary_tr=summary_tr,
         key_points_tr=key_points_tr,
@@ -3119,15 +4359,27 @@ def build_analysis_debug(
     for rejection in rejections or []:
         rejection_counts[rejection.reason] += 1
     review_counts: dict[str, int] = defaultdict(int)
+    video_review_counts: dict[str, int] = defaultdict(int)
     for entry in topic_entries or []:
         for reason in entry.review_reasons:
             review_counts[reason] += 1
+        for reason in entry.video_review_reasons:
+            video_review_counts[reason] += 1
 
     publishable_topics_generated = sum(
         1 for entry in (topic_entries or []) if entry.quality_status == "publishable"
     )
     review_topics_generated = sum(
         1 for entry in (topic_entries or []) if entry.quality_status == "review"
+    )
+    video_publishable_topics_generated = sum(
+        1 for entry in (topic_entries or []) if entry.video_quality_status == "publishable"
+    )
+    video_review_topics_generated = sum(
+        1 for entry in (topic_entries or []) if entry.video_quality_status == "review"
+    )
+    video_rejected_topics_generated = sum(
+        1 for entry in (topic_entries or []) if entry.video_quality_status == "reject"
     )
 
     return AnalysisDebug(
@@ -3141,6 +4393,9 @@ def build_analysis_debug(
         unique_topics_generated=unique_topics_generated,
         publishable_topics_generated=publishable_topics_generated,
         review_topics_generated=review_topics_generated,
+        video_publishable_topics_generated=video_publishable_topics_generated,
+        video_review_topics_generated=video_review_topics_generated,
+        video_rejected_topics_generated=video_rejected_topics_generated,
         rejected_unique_candidates=rejected_unique_candidates,
         dropped_unique_articles=dropped_unique_articles,
         source_breakdown=source_breakdown,
@@ -3152,6 +4407,10 @@ def build_analysis_debug(
         review_breakdown=[
             AnalysisReviewDebug(reason=reason, count=count)
             for reason, count in sorted(review_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        video_review_breakdown=[
+            AnalysisReviewDebug(reason=reason, count=count)
+            for reason, count in sorted(video_review_counts.items(), key=lambda item: (-item[1], item[0]))
         ],
         notes=notes or [],
         ollama_base_url=settings.OLLAMA_BASE_URL,
@@ -3249,7 +4508,7 @@ def build_topic_from_llm_payload(
 
     fallback_topic = build_fallback_topic(cluster, visual_assets, aggregation_type=aggregation_type)
     headline_tr = clean_viewer_text(str(payload.get("headline_tr", "")), source_names=unique_sources, max_sentences=1, max_chars=88) or cluster[0].article.title
-    headline_tr = trim_words(headline_tr, 10)
+    headline_tr = trim_viewer_words(headline_tr, 10)
     summary_tr = clean_viewer_text(str(payload.get("summary_tr", "")), source_names=unique_sources, max_sentences=2, max_chars=150) or (
         fallback_topic.summary_tr if fallback_topic else cluster[0].article.title
     )
@@ -3264,15 +4523,31 @@ def build_topic_from_llm_payload(
         max_items=2,
         max_chars=96,
     )
-    why_it_matters_tr = clean_viewer_text(
+    why_candidate = clean_viewer_text(
         str(payload.get("why_it_matters_tr", "")),
         source_names=unique_sources,
         max_sentences=1,
         max_chars=120,
-    ) or (
-        build_why_it_matters_line(cluster[0].normalized_category)
+    )
+    why_it_matters_tr = (
+        why_candidate
+        if why_candidate and not is_generic_why_line(why_candidate)
+        else build_why_it_matters_line(
+            cluster[0].normalized_category,
+            headline=headline_tr,
+            summary=summary_tr,
+            key_points=key_points_tr,
+            cluster=cluster,
+        )
     )
     category = cluster[0].normalized_category
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=category,
+        headline=headline_tr,
+        summary=summary_tr,
+        key_points=key_points_tr,
+    )
     prompt_parts = coerce_prompt_parts(
         payload.get("video_prompt_parts"),
         cluster,
@@ -3316,6 +4591,8 @@ def build_topic_from_llm_payload(
         topic_id=build_topic_id(cluster),
         category=category,
         aggregation_type=aggregation_type,
+        story_language=fact_pack.story_language,
+        editorial_type=fact_pack.editorial_type,
         headline_tr=headline_tr,
         summary_tr=summary_tr,
         key_points_tr=key_points_tr[:4],
@@ -3358,6 +4635,7 @@ def sort_topics(topics: list[TopicBrief]) -> list[TopicBrief]:
 def make_topic_analysis_entry(
     topic: TopicBrief,
     *,
+    cluster: list[PreparedArticle],
     degraded_generation: bool = False,
 ) -> TopicAnalysisEntry:
     quality_status, review_reasons = evaluate_topic_quality(
@@ -3370,6 +4648,10 @@ def make_topic_analysis_entry(
         degraded_generation=degraded_generation,
     )
     quality_score = calculate_topic_quality_score(score_features)
+    video_quality_status, video_quality_score, video_review_reasons = evaluate_video_quality(
+        topic,
+        cluster=cluster,
+    )
     seen_sources: set[str] = set()
     source_pairs: list[tuple[str, str]] = []
     for article in topic.representative_articles:
@@ -3386,12 +4668,18 @@ def make_topic_analysis_entry(
                 "quality_status": quality_status,
                 "quality_score": quality_score,
                 "review_reasons": list(review_reasons),
+                "video_quality_status": video_quality_status,
+                "video_quality_score": video_quality_score,
+                "video_review_reasons": list(video_review_reasons),
             }
         ),
         quality_status=quality_status,
         quality_score=quality_score,
         score_features=score_features,
         review_reasons=review_reasons,
+        video_quality_status=video_quality_status,
+        video_quality_score=video_quality_score,
+        video_review_reasons=video_review_reasons,
         source_slugs=tuple(slug for slug, _ in source_pairs),
         source_names=tuple(name for _, name in source_pairs),
         degraded_generation=degraded_generation,
@@ -3404,13 +4692,19 @@ def sort_topic_entries(
     include_review: bool,
 ) -> list[TopicAnalysisEntry]:
     filtered_entries = [
-        entry for entry in entries if include_review or entry.quality_status == "publishable"
+        entry
+        for entry in entries
+        if (
+            effective_prompt_visibility_status(entry) != "reject"
+            and (include_review or effective_prompt_visibility_status(entry) == "publishable")
+        )
     ]
     return sorted(
         filtered_entries,
         key=lambda entry: (
-            1 if entry.quality_status == "publishable" else 0,
+            1 if effective_prompt_visibility_status(entry) == "publishable" else 0,
             entry.quality_score,
+            entry.video_quality_score,
         ) + topic_sort_key(entry.topic),
         reverse=True,
     )
@@ -3441,13 +4735,19 @@ def build_topic_quality_totals(
     feedback_records: dict[str, TopicFeedback] | None = None,
 ) -> TopicQualityTotals:
     rejection_counts: dict[str, int] = defaultdict(int)
+    input_rejection_counts: dict[str, int] = defaultdict(int)
     review_counts: dict[str, int] = defaultdict(int)
+    video_review_counts: dict[str, int] = defaultdict(int)
     feedback_items = list((feedback_records or {}).values())
     for rejection in result.rejections:
         rejection_counts[rejection.reason] += 1
+        if rejection.stage == "article":
+            input_rejection_counts[rejection.reason] += 1
     for entry in result.topic_entries:
         for reason in entry.review_reasons:
             review_counts[reason] += 1
+        for reason in entry.video_review_reasons:
+            video_review_counts[reason] += 1
     all_scores = [entry.quality_score for entry in result.topic_entries]
     publishable_scores = [entry.quality_score for entry in result.topic_entries if entry.quality_status == "publishable"]
     review_scores = [entry.quality_score for entry in result.topic_entries if entry.quality_status == "review"]
@@ -3465,6 +4765,9 @@ def build_topic_quality_totals(
         avg_quality_score=average_quality_score(all_scores),
         publishable_avg_quality_score=average_quality_score(publishable_scores),
         review_avg_quality_score=average_quality_score(review_scores),
+        video_publishable_topics=sum(1 for entry in result.topic_entries if entry.video_quality_status == "publishable"),
+        video_review_topics=sum(1 for entry in result.topic_entries if entry.video_quality_status == "review"),
+        video_rejected_topics=sum(1 for entry in result.topic_entries if entry.video_quality_status == "reject"),
         feedback_count=len(feedback_items),
         feedback_coverage_percent=feedback_coverage_percent(
             feedback_count=len(feedback_items),
@@ -3475,9 +4778,17 @@ def build_topic_quality_totals(
             AnalysisRejectionDebug(reason=reason, count=count)
             for reason, count in sorted(rejection_counts.items(), key=lambda item: (-item[1], item[0]))
         ],
+        input_rejection_breakdown=[
+            AnalysisRejectionDebug(reason=reason, count=count)
+            for reason, count in sorted(input_rejection_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
         review_breakdown=[
             AnalysisReviewDebug(reason=reason, count=count)
             for reason, count in sorted(review_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        video_review_breakdown=[
+            AnalysisReviewDebug(reason=reason, count=count)
+            for reason, count in sorted(video_review_counts.items(), key=lambda item: (-item[1], item[0]))
         ],
         feedback_breakdown=feedback_breakdown(feedback_items),
     )
@@ -3529,6 +4840,8 @@ def build_source_quality_reports(result: TopicAnalysisRunResult) -> list[TopicQu
             )
 
     for entry in result.topic_entries:
+        if entry.video_quality_status == "reject":
+            continue
         source_pairs = list(zip(entry.source_slugs, entry.source_names))
         for slug, name in source_pairs:
             bucket = ensure_source(slug, name)
@@ -3625,13 +4938,18 @@ def build_topic_briefs_response(
     )
     dropped_unique_articles = max(0, result.total_unique_candidate_articles - returned_unique_articles)
     debug_notes = list(result.notes)
-    review_topic_count = sum(1 for entry in result.topic_entries if entry.quality_status == "review")
+    combined_review_count = sum(1 for entry in result.topic_entries if effective_prompt_visibility_status(entry) == "review")
+    video_rejected_count = sum(1 for entry in result.topic_entries if entry.video_quality_status == "reject")
 
-    if not include_review and review_topic_count:
+    if not include_review and combined_review_count:
         debug_notes.append(
-            f"{review_topic_count} topic(s) were flagged for review and excluded from the default response."
+            f"{combined_review_count} topic(s) were flagged for review and excluded from the default response."
         )
-    if not limited_entries and review_topic_count and not include_review:
+    if video_rejected_count:
+        debug_notes.append(
+            f"{video_rejected_count} topic(s) were rejected by the video-quality validator before prompt listing."
+        )
+    if not limited_entries and combined_review_count and not include_review:
         debug_notes.append("Only review topics were produced for this window; pass include_review=true to inspect them.")
     if dropped_unique_articles:
         debug_notes.append(
@@ -3653,6 +4971,9 @@ def build_topic_briefs_response(
                     quality_score=entry.quality_score,
                     score_features=entry.score_features,
                     review_reasons=entry.review_reasons,
+                    video_quality_status=entry.video_quality_status,
+                    video_quality_score=entry.video_quality_score,
+                    video_review_reasons=entry.video_review_reasons,
                     source_slugs=entry.source_slugs,
                     source_names=entry.source_names,
                     degraded_generation=entry.degraded_generation,
@@ -3719,11 +5040,16 @@ async def upsert_topic_feedback(
     record.aggregation_type = snapshot.aggregation_type
     record.quality_status = snapshot.quality_status
     record.quality_score = round_quality_score(snapshot.quality_score)
+    record.video_quality_status = snapshot.video_quality_status
+    record.video_quality_score = max(0, min(100, int(snapshot.video_quality_score)))
     record.source_count = snapshot.source_count
     record.article_count = snapshot.article_count
     record.source_slugs = [compact_text(slug) for slug in snapshot.source_slugs if compact_text(slug)]
     record.representative_article_ids = [str(article_id) for article_id in snapshot.representative_article_ids]
     record.review_reasons = [reason for reason in snapshot.review_reasons if reason in VALID_REVIEW_REASONS]
+    record.video_review_reasons = [
+        reason for reason in snapshot.video_review_reasons if reason in VALID_VIDEO_REVIEW_REASONS
+    ]
     record.score_features = score_features
 
     await db.flush()
@@ -3987,7 +5313,7 @@ async def run_topic_analysis(
             ]
 
         if cluster_topics:
-            topic_entries.extend(make_topic_analysis_entry(topic) for topic in cluster_topics)
+            topic_entries.extend(make_topic_analysis_entry(topic, cluster=cluster) for topic in cluster_topics)
             shared_topics_generated += len(cluster_topics)
             continue
 
@@ -3997,6 +5323,7 @@ async def run_topic_analysis(
             topic_entries.append(
                 make_topic_analysis_entry(
                     fallback_topic,
+                    cluster=cluster,
                     degraded_generation=True,
                 )
             )
@@ -4039,7 +5366,7 @@ async def run_topic_analysis(
             aggregation_type="unique",
         )
         if unique_topic:
-            topic_entries.append(make_topic_analysis_entry(unique_topic))
+            topic_entries.append(make_topic_analysis_entry(unique_topic, cluster=cluster))
             unique_topics_generated += 1
             continue
 
@@ -4056,7 +5383,8 @@ async def run_topic_analysis(
         )
         rejected_unique_candidates += 1
 
-    review_topic_count = sum(1 for entry in topic_entries if entry.quality_status == "review")
+    review_topic_count = sum(1 for entry in topic_entries if effective_prompt_visibility_status(entry) == "review")
+    video_rejected_count = sum(1 for entry in topic_entries if entry.video_quality_status == "reject")
     rejected_articles = sum(1 for rejection in analysis_rejections if rejection.stage == "article")
     if not topic_entries:
         if unique_candidate_clusters:
@@ -4079,6 +5407,10 @@ async def run_topic_analysis(
         if review_topic_count:
             analysis_notes.append(
                 f"{review_topic_count} topic(s) were flagged for review before publication."
+            )
+        if video_rejected_count:
+            analysis_notes.append(
+                f"{video_rejected_count} topic(s) were rejected by the video-quality validator."
             )
 
     return TopicAnalysisRunResult(

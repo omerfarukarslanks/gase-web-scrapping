@@ -8,18 +8,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.article import Article
 from app.models.source import Source
 from app.models.topic_feedback import TopicFeedback
-from app.schemas.analysis import VideoPromptParts
+from app.schemas.analysis import (
+    RemotionStoryboard,
+    TopicBrief,
+    TopicRepresentativeArticle,
+    VideoContent,
+    VideoPlan,
+    VideoPlanScene,
+    VideoPromptParts,
+    VisualAsset,
+)
 from app.services.article_service import hash_url
 from app.services.remotion_storyboard_service import RemotionStoryboardService
 from app.services.topic_analysis import (
     OllamaAnalysisError,
+    OllamaTopicAnalyzer,
     PreparedArticle,
     build_candidate_clusters,
     build_contextual_prompt_parts,
+    build_fallback_topic,
+    build_prepared_articles,
     build_fallback_video_plan,
     build_remotion_storyboard_context,
     build_video_prompt_from_parts,
     coerce_video_plan,
+    evaluate_video_quality,
     get_recent_articles_for_analysis,
     normalize_analysis_category,
     tokenize,
@@ -69,6 +82,8 @@ async def create_article(
     created_at: datetime,
     category: str | None = None,
     image_url: str | None = None,
+    content_snippet: str | None = None,
+    content_text: str | None = None,
 ) -> Article:
     article = Article(
         source_id=source.id,
@@ -76,7 +91,8 @@ async def create_article(
         url=url,
         url_hash=hash_url(url),
         summary=summary,
-        content_snippet=None,
+        content_snippet=content_snippet,
+        content_text=content_text,
         author=None,
         published_at=published_at,
         scraped_at=created_at,
@@ -102,6 +118,10 @@ def make_prepared_article(
     source_name: str,
     source_slug: str,
     normalized_category: str = "business",
+    content_snippet: str | None = None,
+    content_text: str | None = None,
+    language: str = "en",
+    editorial_type: str = "report",
 ) -> PreparedArticle:
     timestamp = datetime.now(UTC).replace(tzinfo=None)
     article = Article(
@@ -111,14 +131,15 @@ def make_prepared_article(
         url=f"https://{source_slug}.example.com/{uuid4()}",
         url_hash=hash_url(f"https://{source_slug}.example.com/{uuid4()}"),
         summary=summary,
-        content_snippet=None,
+        content_snippet=content_snippet,
+        content_text=content_text,
         author=None,
         published_at=timestamp,
         scraped_at=timestamp,
         image_url=None,
         category=normalized_category,
         tags=["energy", "markets"],
-        language="en",
+        language=language,
         source_category="finance",
         raw_metadata=None,
         created_at=timestamp,
@@ -127,14 +148,567 @@ def make_prepared_article(
     return PreparedArticle(
         article=article,
         normalized_category=normalized_category,
-        analysis_text=summary,
+        cluster_text=content_snippet or summary,
+        detail_text=content_text or content_snippet or summary,
+        editorial_type=editorial_type,
+        story_language=language,
+        uncertainty_level="speculative" if editorial_type == "speculative" else "confirmed",
         timestamp=timestamp,
         source_name=source_name,
         source_slug=source_slug,
         tag_tokens={"energy", "markets"},
         title_tokens=tokenize(title),
-        text_tokens=tokenize(summary, max_tokens=80),
+        text_tokens=tokenize(content_snippet or summary, max_tokens=80),
     )
+
+
+def make_video_validation_topic(
+    cluster: list[PreparedArticle],
+    *,
+    headline_tr: str,
+    summary_tr: str,
+    why_it_matters_tr: str,
+    key_points_tr: list[str],
+    scene_specs: list[dict],
+    category: str = "general",
+    must_include: list[str] | None = None,
+    video_prompt_en: str = "Use Remotion best practices.",
+) -> TopicBrief:
+    representative_articles = [
+        TopicRepresentativeArticle(
+            id=item.article.id,
+            title=item.article.title,
+            url=item.article.url,
+            source_name=item.source_name,
+            source_slug=item.source_slug,
+            published_at=item.timestamp,
+            image_url=item.article.image_url,
+        )
+        for item in cluster[:3]
+    ]
+    visual_assets = [
+        VisualAsset(
+            asset_id="asset-1",
+            url=cluster[0].article.image_url or "https://cdn.example.com/video-quality.jpg",
+            kind="article_image",
+            source_article_id=cluster[0].article.id,
+            source_name=cluster[0].source_name,
+            alt_text=headline_tr,
+        )
+    ]
+    scenes = [
+        VideoPlanScene(
+            scene_id=spec.get("scene_id", f"scene-{index + 1}"),
+            purpose=spec.get("purpose", "hook"),
+            duration_seconds=spec.get("duration_seconds", 8),
+            layout_hint=spec.get("layout_hint", "headline"),
+            headline=spec["headline"],
+            body=spec.get("body", ""),
+            supporting_points=spec.get("supporting_points", []),
+            key_figures=spec.get("key_figures", []),
+            key_data=spec.get("key_data", ""),
+            visual_direction=spec.get("visual_direction", "Editorial framing"),
+            motion_direction=spec.get("motion_direction", "Measured push-ins"),
+            transition_from_previous=spec.get("transition_from_previous", "Cold open" if index == 0 else "Cut"),
+            source_line=spec.get("source_line", ""),
+            asset_ids=spec.get("asset_ids", ["asset-1"] if index == 0 else []),
+        )
+        for index, spec in enumerate(scene_specs)
+    ]
+    video_plan = VideoPlan(
+        title=headline_tr,
+        audience_mode="sound_off_first",
+        master_format="16:9",
+        duration_seconds=sum(scene.duration_seconds for scene in scenes),
+        pacing_hint="balanced",
+        source_visibility="none",
+        scenes=scenes,
+    )
+    video_content = VideoContent(
+        headline=headline_tr,
+        narrative=[scene.body or scene.headline for scene in scenes if scene.body or scene.headline][:3],
+        key_figures=[figure for scene in scenes for figure in scene.key_figures][:4],
+        key_data=next((scene.key_data for scene in scenes if scene.key_data), ""),
+        source_line="",
+        duration_seconds=video_plan.duration_seconds,
+    )
+    return TopicBrief(
+        topic_id=f"topic-{uuid4().hex[:8]}",
+        category=category,
+        aggregation_type="shared" if len({item.source_slug for item in cluster}) >= 2 else "unique",
+        story_language=cluster[0].story_language if cluster else "en",
+        editorial_type=cluster[0].editorial_type if cluster else "report",
+        headline_tr=headline_tr,
+        summary_tr=summary_tr,
+        key_points_tr=key_points_tr,
+        why_it_matters_tr=why_it_matters_tr,
+        confidence=0.82,
+        source_count=len({item.source_slug for item in cluster}),
+        article_count=len(cluster),
+        sources=[item.source_name for item in cluster],
+        representative_articles=representative_articles,
+        visual_assets=visual_assets,
+        video_prompt_en=video_prompt_en,
+        video_prompt_parts=VideoPromptParts(
+            format_hint="Editorial short",
+            story_angle=headline_tr,
+            visual_brief="Use bold typography and one clear hero frame.",
+            motion_treatment="Measured push-ins",
+            transition_style="Editorial wipes",
+            scene_sequence=[spec["headline"] for spec in scene_specs],
+            tone="Urgent and factual",
+            design_keywords=["editorial typography", "news texture"],
+            must_include=must_include or [],
+            avoid=["Generic filler footage"],
+            duration_seconds=video_plan.duration_seconds,
+        ),
+        video_plan=video_plan,
+        video_content=video_content,
+        remotion_storyboard=RemotionStoryboard(visual_thesis=headline_tr, scenes=[]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_prepared_articles_prefers_content_text_for_detail_and_snippet_for_cluster(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    source = await create_source(db_session, slug="guardian", name="The Guardian", category="general")
+    article = await create_article(
+        db_session,
+        source=source,
+        title="City opens flood recovery fund after weekend storm",
+        url="https://guardian.example.com/flood-recovery-fund",
+        source_category="general",
+        summary="Short RSS summary about the flood recovery fund.",
+        content_snippet="Snippet says the city opened a recovery fund after weekend flood damage.",
+        content_text=(
+            "City officials opened a recovery fund after weekend flooding damaged roads and homes across the riverfront district. "
+            "The mayor said bridge repairs will start immediately and displaced families can apply for emergency aid on Friday morning. "
+            "Crews are also inspecting drainage systems after overnight storms."
+        ),
+        published_at=now - timedelta(minutes=10),
+        created_at=now - timedelta(minutes=10),
+    )
+    await db_session.commit()
+
+    result = await build_prepared_articles([article])
+
+    assert len(result.prepared_articles) == 1
+    prepared = result.prepared_articles[0]
+    assert prepared.cluster_text == "Snippet says the city opened a recovery fund after weekend flood damage."
+    assert "bridge repairs will start immediately" in prepared.detail_text
+    assert prepared.detail_text != prepared.cluster_text
+
+
+@pytest.mark.asyncio
+async def test_build_prepared_articles_uses_content_text_lead_before_summary_for_cluster(
+    db_session: AsyncSession,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    source = await create_source(db_session, slug="apnews", name="AP News", category="general")
+    article = await create_article(
+        db_session,
+        source=source,
+        title="Heatwave forces overnight cooling plan",
+        url="https://apnews.example.com/heatwave-cooling-plan",
+        source_category="general",
+        summary="Very short summary.",
+        content_text=(
+            "Officials opened overnight cooling centers ahead of a fast-moving heatwave expected to peak on Friday. "
+            "Emergency crews are extending transit hours so elderly residents can reach shelters safely. "
+            "The weather service warned temperatures could challenge early-season records."
+        ),
+        published_at=now - timedelta(minutes=8),
+        created_at=now - timedelta(minutes=8),
+    )
+    await db_session.commit()
+
+    result = await build_prepared_articles([article])
+
+    prepared = result.prepared_articles[0]
+    assert "overnight cooling centers" in prepared.cluster_text
+    assert prepared.cluster_text != "Very short summary."
+    assert "Emergency crews are extending transit hours" in prepared.detail_text
+
+
+def test_build_fallback_topic_prefers_detail_text_over_rss_summary() -> None:
+    prepared = make_prepared_article(
+        title="City opens flood recovery fund after weekend storm",
+        summary="Brief RSS stub.",
+        content_text=(
+            "City officials opened a recovery fund after weekend flooding damaged roads and homes across the riverfront district. "
+            "The mayor said displaced families can apply for emergency aid on Friday morning."
+        ),
+        source_name="AP News",
+        source_slug="apnews",
+        normalized_category="general",
+    )
+
+    topic = build_fallback_topic([prepared], [], aggregation_type="unique")
+
+    assert topic is not None
+    assert "recovery fund" in topic.summary_tr.lower()
+    assert "brief rss stub" not in topic.summary_tr.lower()
+
+
+def test_ollama_prompt_payload_includes_detail_and_cluster_text() -> None:
+    analyzer = OllamaTopicAnalyzer()
+    prepared = make_prepared_article(
+        title="Oil rises after refinery outage",
+        summary="RSS summary",
+        content_snippet="Cluster snippet about oil rising after the outage.",
+        content_text=(
+            "Oil prices moved higher after a refinery outage in Texas tightened near-term supply expectations. "
+            "Traders pointed to diesel and gasoline inventories as the main pressure point."
+        ),
+        source_name="Reuters",
+        source_slug="reuters",
+    )
+
+    prompt = analyzer._build_prompt([prepared], [])
+
+    assert '"cluster_text": "Cluster snippet about oil rising after the outage."' in prompt
+    assert '"detail_text": "Oil prices moved higher after a refinery outage in Texas tightened near-term supply expectations.' in prompt
+    assert "Use detail_text as the main article context" in prompt
+    assert '"analysis_text"' not in prompt
+
+
+def test_evaluate_video_quality_rejects_cross_story_contamination() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Bosnia beats Italy on penalties to qualify for World Cup",
+            summary="Bosnia beat Italy on penalties to qualify after a 1-1 draw.",
+            content_text=(
+                "Bosnia and Herzegovina beat Italy on penalties after a 1-1 draw to qualify for the World Cup. "
+                "Supporters celebrated through the night in Zenica and Sarajevo."
+            ),
+            source_name="Al Jazeera",
+            source_slug="aljazeera",
+            normalized_category="sports",
+        ),
+        make_prepared_article(
+            title="Bosnia reaches World Cup after dramatic shootout win over Italy",
+            summary="A penalty shootout sent Bosnia back to the World Cup.",
+            content_text=(
+                "A dramatic penalty shootout sent Bosnia back to the World Cup and sparked huge celebrations across the country."
+            ),
+            source_name="AP News",
+            source_slug="apnews",
+            normalized_category="sports",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="Bosna Italya'yi penaltılarla eleyip Dunya Kupasi'na cıktı",
+        summary_tr="Bosna penaltılarla Italya'yi eledi. Lamine Yamal taraftar tezahuratlarini kinadi.",
+        key_points_tr=[
+            "Bosna Italya'yi penaltılarla eledi.",
+            "Lamine Yamal anti-Muslim chants sonrasinda tepki gosterdi.",
+        ],
+        why_it_matters_tr="Bu zafer Bosna'nin turnuva donusu icin tarihi bir gece oldu.",
+        scene_specs=[
+            {
+                "headline": "Bosnia beats Italy on penalties",
+                "body": "Bosnia reached the World Cup after a dramatic shootout win.",
+                "key_figures": ["Bosnia", "Italy"],
+            },
+            {
+                "headline": "Yamal condemns anti-Muslim chants",
+                "body": "Spain's final hopes were also clouded by abuse at another match.",
+                "key_figures": ["Yamal", "Spain"],
+            },
+        ],
+        must_include=["Bosnia", "Italy", "Yamal"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "reject"
+    assert score <= 60
+    assert "cross_story_contamination" in reasons
+
+
+def test_evaluate_video_quality_rejects_broken_copy() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Phil Mickelson withdraws from Masters due to family health matter",
+            summary="Phil Mickelson will miss the Masters because of a family health matter.",
+            content_text=(
+                "Phil Mickelson will miss the Masters because of an ongoing family health matter and expects to be out for an extended period."
+            ),
+            source_name="The Guardian",
+            source_slug="guardian",
+            normalized_category="sports",
+        ),
+        make_prepared_article(
+            title="Mickelson says he will miss Augusta for extended period",
+            summary="Mickelson says he will miss Augusta.",
+            content_text=(
+                "The three-time Masters champion said he will miss Augusta and remain away from competition for an extended period."
+            ),
+            source_name="AP News",
+            source_slug="apnews",
+            normalized_category="sports",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="Phil Mickelson Masters'tan aile sagligi nedeniyle cekildi",
+        summary_tr="Three-time champion 'out for extended period''It is the most special week.",
+        key_points_tr=["Phil Mickelson Masters'ta yer almayacak."],
+        why_it_matters_tr="Augusta oncesi saha dısı en buyuk gelismelerden biri bu oldu.",
+        scene_specs=[
+            {
+                "headline": "Phil Mickelson withdraws from Masters",
+                "body": "Three-time champion 'out for extended period''It is the most special week.",
+                "key_figures": ["Phil Mickelson", "Three"],
+            }
+        ],
+        must_include=["Phil Mickelson", "Three"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "reject"
+    assert score <= 65
+    assert "broken_copy" in reasons
+
+
+def test_evaluate_video_quality_marks_generic_why_and_missing_numeric_impact_review() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Mortgage rates surge as spring homebuying season slows",
+            summary="Mortgage rates climbed and threatened to wash out the spring buying season.",
+            content_text=(
+                "The rate on a 30-year mortgage rose to 6.46% and buyers now face about $265 in extra monthly payments. "
+                "That adds up to roughly $95,400 over the life of a 30-year loan."
+            ),
+            source_name="CBS News",
+            source_slug="cbsnews",
+            normalized_category="general",
+        ),
+        make_prepared_article(
+            title="Higher bond yields push mortgage costs higher for homebuyers",
+            summary="Higher yields pushed borrowing costs back up.",
+            content_text=(
+                "Borrowing costs jumped after Treasury yields climbed, making the average home loan noticeably more expensive for buyers."
+            ),
+            source_name="AP News",
+            source_slug="apnews",
+            normalized_category="general",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="general",
+        headline_tr="Mortgage faizleri yukseliyor, ev alicilarinin planlari bozuluyor",
+        summary_tr="Mortgage rates are surging, foiling homebuyers' best-laid plans.",
+        key_points_tr=["Mortgage rates are surging, foiling homebuyers' best-laid plans."],
+        why_it_matters_tr="The next confirmed update will likely shape where the story goes next.",
+        scene_specs=[
+            {
+                "headline": "Mortgage rates are surging",
+                "body": "Borrowing costs are threatening to wash out the spring homebuying season.",
+                "key_figures": ["Mortgage", "Surging"],
+            },
+            {
+                "headline": "Mortgage rates are surging",
+                "body": "The next confirmed update will likely shape where the story goes next.",
+                "supporting_points": ["Mortgage rates are surging, foiling homebuyers' best-laid plans."],
+                "key_figures": ["Mortgage", "Surging"],
+            },
+        ],
+        must_include=["Mortgage", "Surging"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "review"
+    assert score < 85
+    assert "generic_why_it_matters" in reasons
+    assert "missing_numeric_impact" in reasons
+
+
+def test_evaluate_video_quality_flags_missing_institutional_context_review() -> None:
+    cluster = [
+        make_prepared_article(
+            title="DOJ says Presidential Records Act is unconstitutional",
+            summary="The Justice Department said the records law is unconstitutional.",
+            content_text=(
+                "The Justice Department's Office of Legal Counsel said the Presidential Records Act is unconstitutional and that President Trump does not need to comply with it. "
+                "The law requires presidential records to go to the National Archives."
+            ),
+            source_name="CBS News",
+            source_slug="cbsnews",
+            normalized_category="general",
+        ),
+        make_prepared_article(
+            title="OLC opinion says Trump does not need to follow records law",
+            summary="An OLC opinion said Trump does not need to comply with the law.",
+            content_text=(
+                "The opinion binds the executive branch unless a court reaches a different conclusion."
+            ),
+            source_name="AP News",
+            source_slug="apnews",
+            normalized_category="general",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="general",
+        headline_tr="DOJ Baskanlik Kayitlari Yasasi'nin anayasaya aykiri oldugunu soyluyor",
+        summary_tr="DOJ opinion says the records law is unconstitutional.",
+        key_points_tr=["DOJ says Presidential Records Act is unconstitutional."],
+        why_it_matters_tr="This could quickly reshape the political response around the case.",
+        scene_specs=[
+            {
+                "headline": "DOJ opinion sparks fresh debate",
+                "body": "A new legal opinion is drawing attention across Washington.",
+                "key_figures": ["DOJ", "Office"],
+            },
+            {
+                "headline": "What to watch next",
+                "body": "Political reaction may follow quickly after the opinion.",
+                "key_figures": ["DOJ", "Office"],
+            },
+        ],
+        must_include=["DOJ", "Office"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "review"
+    assert score < 85
+    assert "missing_institutional_context" in reasons
+
+
+def test_evaluate_video_quality_flags_missing_sports_result_context_review() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Bosnia beats Italy on penalties to qualify for World Cup",
+            summary="Bosnia beat Italy on penalties to qualify for the World Cup.",
+            content_text=(
+                "Bosnia beat Italy on penalties after a 1-1 draw to qualify for the World Cup. "
+                "Esmir Bajraktarevic scored the decisive spot kick."
+            ),
+            source_name="Al Jazeera",
+            source_slug="aljazeera",
+            normalized_category="sports",
+        ),
+        make_prepared_article(
+            title="Bosnia reaches World Cup after shootout win over Italy",
+            summary="Bosnia reached the World Cup after a shootout win over Italy.",
+            content_text=(
+                "Supporters in Zenica and Sarajevo celebrated after the dramatic shootout."
+            ),
+            source_name="AP News",
+            source_slug="apnews",
+            normalized_category="sports",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="Bosna'nin Italya karsisindaki tarihi gecesi",
+        summary_tr="Bosna'nin tarihi gecesi ulke capinda buyuk cosku yaratti.",
+        key_points_tr=["Bosna taraftarlari tarihi geceyi kutladi."],
+        why_it_matters_tr="Bu galibiyet ulke capinda uzun sure konusulacak bir gece yaratti.",
+        scene_specs=[
+            {
+                "headline": "Bosnia's historic night",
+                "body": "The country erupted in celebration after a dramatic evening.",
+                "key_figures": ["Bosnia", "Italy"],
+            }
+        ],
+        must_include=["Bosnia", "Italy"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "review"
+    assert score < 85
+    assert "missing_sports_result_context" in reasons
+
+
+def test_evaluate_video_quality_forces_speculative_story_to_review() -> None:
+    cluster = [
+        make_prepared_article(
+            title="USC a possible landing spot for Audi Crooks",
+            summary="Iowa State star Audi Crooks entered the transfer portal and could land at USC.",
+            content_text=(
+                "Iowa State star Audi Crooks entered the transfer portal for her final year. "
+                "Some believe USC could be a landing spot because of the roster already in place."
+            ),
+            source_name="Yahoo Sports",
+            source_slug="yahoosports",
+            normalized_category="sports",
+            editorial_type="speculative",
+        )
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="USC, Audi Crooks icin olasi duraklardan biri olabilir",
+        summary_tr="Audi Crooks transfer portalina girdi ve USC olasi adreslerden biri olarak aniliyor.",
+        key_points_tr=["Audi Crooks final sezonu oncesi transfer portalina girdi."],
+        why_it_matters_tr="USC kadrosu olasi bir transfer icin dikkat ceken senaryolardan biri olarak goruluyor.",
+        scene_specs=[
+            {
+                "headline": "Audi Crooks enters transfer portal",
+                "body": "USC is one of the possible destinations being discussed for her final college season.",
+                "key_figures": ["Audi Crooks", "USC"],
+            }
+        ],
+        must_include=["Audi Crooks", "USC"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "review"
+    assert score < 85
+    assert "speculative_story" in reasons
+
+
+def test_evaluate_video_quality_flags_mixed_language_copy_review() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Con la tabla de sumar pueden salir las cuentas",
+            summary="El equipo maño empata en Leganes y sigue creciendo con David Navarro.",
+            content_text=(
+                "El Real Zaragoza empató 1-1 en Leganés y mantiene viva la pelea por la permanencia. "
+                "El equipo de David Navarro sigue sumando en un tramo decisivo."
+            ),
+            source_name="Marca English",
+            source_slug="marca",
+            normalized_category="sports",
+            language="es",
+        )
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="Con la tabla de sumar pueden salir las cuentas",
+        summary_tr="El Zaragoza rescato un empate clave en Leganes.",
+        key_points_tr=["Real Zaragoza took a key point in Leganes."],
+        why_it_matters_tr="El punto mantiene al equipo vivo en la pelea por la permanencia.",
+        scene_specs=[
+            {
+                "headline": "Con la tabla de sumar pueden salir las cuentas",
+                "body": "Real Zaragoza took a key point in Leganes to stay alive in the relegation fight.",
+                "key_figures": ["David Navarro", "Real Zaragoza"],
+            }
+        ],
+        must_include=["David Navarro", "Real Zaragoza"],
+    )
+
+    status, score, reasons = evaluate_video_quality(topic, cluster=cluster)
+
+    assert status == "review"
+    assert score < 85
+    assert "mixed_language_copy" in reasons
 
 
 async def create_topic_feedback_record(
@@ -148,10 +722,13 @@ async def create_topic_feedback_record(
     aggregation_type: str = "shared",
     quality_status: str = "publishable",
     quality_score: float = 0.75,
+    video_quality_status: str = "publishable",
+    video_quality_score: int = 88,
     source_count: int = 2,
     article_count: int = 2,
     source_slugs: list[str] | None = None,
     review_reasons: list[str] | None = None,
+    video_review_reasons: list[str] | None = None,
     score_features: dict[str, bool] | None = None,
     note: str | None = None,
 ) -> TopicFeedback:
@@ -165,11 +742,14 @@ async def create_topic_feedback_record(
         aggregation_type=aggregation_type,
         quality_status=quality_status,
         quality_score=quality_score,
+        video_quality_status=video_quality_status,
+        video_quality_score=video_quality_score,
         source_count=source_count,
         article_count=article_count,
         source_slugs=source_slugs or ["reuters"],
         representative_article_ids=[str(uuid4())],
         review_reasons=review_reasons or [],
+        video_review_reasons=video_review_reasons or [],
         score_features=score_features
         or {
             "shared_topic": aggregation_type == "shared",
@@ -1421,6 +2001,108 @@ async def test_topic_briefs_endpoint_include_review_returns_review_topics_after_
 
 
 @pytest.mark.asyncio
+async def test_topic_briefs_endpoint_filters_video_rejects_and_only_shows_video_review_with_include_review(
+    client,
+    db_session: AsyncSession,
+    monkeypatch,
+) -> None:
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ap = await create_source(db_session, slug="ap-video-filter", name="AP Video Filter", category="general")
+    reuters = await create_source(
+        db_session,
+        slug="reuters-video-filter",
+        name="Reuters Video Filter",
+        category="general",
+    )
+    bbc = await create_source(db_session, slug="bbc-video-filter", name="BBC Video Filter", category="general")
+
+    await create_article(
+        db_session,
+        source=ap,
+        title="City opens overnight cooling centers ahead of heatwave",
+        url="https://ap-video-filter.example.com/cooling-centers",
+        source_category="general",
+        summary="Officials opened overnight cooling centers ahead of a fast-moving heatwave.",
+        published_at=now - timedelta(minutes=16),
+        created_at=now - timedelta(minutes=16),
+        category="general",
+        image_url="https://cdn.example.com/ap-video-filter-cooling.jpg",
+    )
+    await create_article(
+        db_session,
+        source=reuters,
+        title="Mayor announces flood cleanup fund after weekend damage",
+        url="https://reuters-video-filter.example.com/flood-fund",
+        source_category="general",
+        summary="A mayor announced a cleanup fund after severe weekend flood damage.",
+        published_at=now - timedelta(minutes=12),
+        created_at=now - timedelta(minutes=12),
+        category="general",
+        image_url="https://cdn.example.com/reuters-video-filter-flood.jpg",
+    )
+    await create_article(
+        db_session,
+        source=bbc,
+        title="Transit agency says quote chain broke after signal outage",
+        url="https://bbc-video-filter.example.com/signal-outage",
+        source_category="general",
+        summary="A transit agency said the quote chain broke after a signal outage hit morning service.",
+        published_at=now - timedelta(minutes=8),
+        created_at=now - timedelta(minutes=8),
+        category="general",
+        image_url="https://cdn.example.com/bbc-video-filter-transit.jpg",
+    )
+    await db_session.commit()
+
+    async def should_not_run(self, cluster, visual_assets=None):
+        raise AssertionError("single-source unique topics should not reach Ollama")
+
+    def fake_evaluate_video_quality(topic, *, cluster):
+        headline = topic.headline_tr.lower()
+        if "flood cleanup fund" in headline:
+            return ("review", 72, ("headline_only_support",))
+        if "quote chain broke" in headline:
+            return ("reject", 40, ("broken_copy",))
+        return ("publishable", 94, ())
+
+    monkeypatch.setattr(
+        "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
+        should_not_run,
+    )
+    monkeypatch.setattr(
+        "app.services.topic_analysis.evaluate_video_quality",
+        fake_evaluate_video_quality,
+    )
+
+    default_response = await client.get(
+        "/api/v1/analysis/topic-briefs",
+        params={"hours": 3, "debug": True},
+    )
+
+    assert default_response.status_code == 200
+    default_payload = default_response.json()
+    default_topics = [topic for group in default_payload["groups"] for topic in group["topics"]]
+    assert len(default_topics) == 1
+    assert default_topics[0]["video_quality_status"] == "publishable"
+    assert default_payload["debug"]["video_publishable_topics_generated"] == 1
+    assert default_payload["debug"]["video_review_topics_generated"] == 1
+    assert default_payload["debug"]["video_rejected_topics_generated"] == 1
+
+    review_response = await client.get(
+        "/api/v1/analysis/topic-briefs",
+        params={"hours": 3, "include_review": True, "debug": True},
+    )
+
+    assert review_response.status_code == 200
+    review_payload = review_response.json()
+    review_topics = [topic for group in review_payload["groups"] for topic in group["topics"]]
+    assert len(review_topics) == 2
+    assert [topic["video_quality_status"] for topic in review_topics] == ["publishable", "review"]
+    assert all(topic["video_quality_status"] != "reject" for topic in review_topics)
+    assert review_topics[1]["video_review_reasons"] == ["headline_only_support"]
+
+
+@pytest.mark.asyncio
 async def test_topic_briefs_endpoint_filters_non_news_utility_pages_from_unique_topics(
     client,
     db_session: AsyncSession,
@@ -1652,6 +2334,10 @@ async def test_topic_quality_report_endpoint_summarizes_publishable_review_and_r
 
     rejection_breakdown = {item["reason"]: item["count"] for item in payload["totals"]["rejection_breakdown"]}
     assert rejection_breakdown["utility_or_hub_page"] >= 1
+    input_rejection_breakdown = {
+        item["reason"]: item["count"] for item in payload["totals"]["input_rejection_breakdown"]
+    }
+    assert input_rejection_breakdown["utility_or_hub_page"] >= 1
     review_breakdown = {item["reason"]: item["count"] for item in payload["totals"]["review_breakdown"]}
     assert review_breakdown["degraded_generation"] >= 1
 
@@ -1915,6 +2601,8 @@ async def test_topic_feedback_endpoints_upsert_hydrate_and_delete(
             "aggregation_type": initial_topic["aggregation_type"],
             "quality_status": initial_topic["quality_status"],
             "quality_score": initial_topic["quality_score"],
+            "video_quality_status": initial_topic["video_quality_status"],
+            "video_quality_score": initial_topic["video_quality_score"],
             "source_count": initial_topic["source_count"],
             "article_count": initial_topic["article_count"],
             "sources": initial_topic["sources"],
@@ -1924,6 +2612,7 @@ async def test_topic_feedback_endpoints_upsert_hydrate_and_delete(
                 if article.get("source_slug")
             ],
             "review_reasons": initial_topic["review_reasons"],
+            "video_review_reasons": initial_topic["video_review_reasons"],
             "representative_article_ids": [
                 article["id"] for article in initial_topic["representative_articles"]
             ],
@@ -2004,9 +2693,18 @@ async def test_topic_quality_report_endpoint_includes_feedback_coverage(
     async def should_not_run(self, cluster, visual_assets=None):
         raise AssertionError("single-source unique topics should not reach Ollama")
 
+    def fake_evaluate_video_quality(topic, *, cluster):
+        if "flood cleanup fund" in topic.headline_tr.lower():
+            return ("review", 72, ("headline_only_support",))
+        return ("publishable", 92, ())
+
     monkeypatch.setattr(
         "app.services.topic_analysis.OllamaTopicAnalyzer.analyze_cluster",
         should_not_run,
+    )
+    monkeypatch.setattr(
+        "app.services.topic_analysis.evaluate_video_quality",
+        fake_evaluate_video_quality,
     )
 
     topics_response = await client.get(
@@ -2029,6 +2727,8 @@ async def test_topic_quality_report_endpoint_includes_feedback_coverage(
             "aggregation_type": publishable_topic["aggregation_type"],
             "quality_status": publishable_topic["quality_status"],
             "quality_score": publishable_topic["quality_score"],
+            "video_quality_status": publishable_topic["video_quality_status"],
+            "video_quality_score": publishable_topic["video_quality_score"],
             "source_count": publishable_topic["source_count"],
             "article_count": publishable_topic["article_count"],
             "sources": publishable_topic["sources"],
@@ -2038,6 +2738,7 @@ async def test_topic_quality_report_endpoint_includes_feedback_coverage(
                 if article.get("source_slug")
             ],
             "review_reasons": publishable_topic["review_reasons"],
+            "video_review_reasons": publishable_topic["video_review_reasons"],
             "representative_article_ids": [
                 article["id"] for article in publishable_topic["representative_articles"]
             ],
@@ -2056,6 +2757,12 @@ async def test_topic_quality_report_endpoint_includes_feedback_coverage(
     assert report["totals"]["feedback_count"] == 1
     assert report["totals"]["feedback_coverage_percent"] == 50.0
     assert report["totals"]["feedback_breakdown"] == [{"label": "approved", "count": 1}]
+    assert report["totals"]["video_publishable_topics"] == 1
+    assert report["totals"]["video_review_topics"] == 1
+    assert report["totals"]["video_rejected_topics"] == 0
+    assert report["totals"]["video_review_breakdown"] == [
+        {"reason": "headline_only_support", "count": 1}
+    ]
 
 
 @pytest.mark.asyncio
