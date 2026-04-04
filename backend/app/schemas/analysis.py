@@ -5,6 +5,119 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+ContentCategory = Literal[
+    "world",
+    "politics",
+    "business",
+    "economy",
+    "technology",
+    "sports",
+    "culture",
+    "arts",
+    "science",
+    "environment",
+    "health",
+    "opinion",
+    "analysis",
+    "general",
+]
+StrategyDomain = Literal[
+    "world",
+    "politics",
+    "business",
+    "economy",
+    "technology",
+    "sports",
+    "culture",
+    "arts",
+    "science",
+    "environment",
+    "health",
+    "opinion",
+    "analysis",
+    "general",
+    "crime_legal",
+    "diplomacy",
+]
+PrimaryOutput = Literal["vertical_video", "carousel"]
+VoiceoverMode = Literal["native", "hybrid", "text_only"]
+HookStyle = Literal["urgent", "authority", "curiosity", "human", "explainer", "analysis"]
+Pacing = Literal["fast", "balanced", "measured"]
+VisualPolicy = Literal[
+    "real_asset_first",
+    "data_card",
+    "demo_explainer",
+    "scoreboard",
+    "human_centered",
+    "quote_visual",
+    "symbolic_reconstruction",
+    "restrained_drama",
+]
+ClaimPolicy = Literal[
+    "standard_fact_voice",
+    "attributed_claims",
+    "analysis_attribution",
+    "medical_caution",
+    "opinion_attribution",
+]
+SensitivityLevel = Literal["low", "medium", "high"]
+StoryFamily = Literal[
+    "result_update",
+    "profile_feature",
+    "preview_watchlist",
+    "schedule_listing",
+    "betting_pick",
+    "conflict_breaking",
+    "disaster_update",
+    "legal_case",
+    "court_ruling",
+    "consumer_impact",
+    "institutional_review",
+    "obituary_profile",
+    "culture_controversy",
+    "commentary_recap",
+    "policy_shift",
+    "social_trend",
+    "opinion_editorial",
+    "rescue_operation",
+    "general_update",
+]
+PlanningStatus = Literal["produce", "review", "carousel_only", "skip"]
+EditorialIntent = Literal["break", "explain", "profile", "memorial", "debate", "guide", "warning", "watchlist"]
+LayoutFamily = Literal[
+    "scoreboard_stack",
+    "hero_detail_stack",
+    "panel_listing_stack",
+    "map_casualty_stack",
+    "document_context_stack",
+    "quote_context_stack",
+    "price_impact_stack",
+    "timeline_stack",
+    "memorial_profile_stack",
+    "reaction_split_stack",
+    "rescue_sequence_stack",
+    "generic_story_stack",
+]
+RiskFlag = Literal[
+    "conflict_or_casualty",
+    "legal_allegation",
+    "election_process",
+    "medical_claim",
+    "minor_involved",
+    "opinion_content",
+    "gambling_content",
+    "hate_speech_context",
+    "obituary_sensitive",
+    "speculative_claim",
+]
+EvidenceLevel = Literal["full_text", "summary_only", "headline_only"]
+UncertaintyLevel = Literal["confirmed", "mixed", "speculative"]
+SceneGoal = Literal["hook", "setup", "main_fact", "context", "impact", "reaction", "close"]
+VisualType = Literal["action_photo", "portrait", "scoreboard", "map", "document", "quote_card", "data_card", "timeline", "symbolic"]
+SafeVoiceRule = Literal["fact_voice", "attributed", "opinion_labeled"]
+VideoMasterFormat = Literal["16:9", "9:16"]
+
+
 class VideoPromptParts(BaseModel):
     format_hint: str = ""
     story_angle: str
@@ -50,7 +163,7 @@ class VideoPlanScene(BaseModel):
 class VideoPlan(BaseModel):
     title: str
     audience_mode: Literal["sound_off_first"]
-    master_format: Literal["16:9"]
+    master_format: VideoMasterFormat
     duration_seconds: int
     pacing_hint: str
     source_visibility: Literal["none", "subtle", "contextual"]
@@ -125,9 +238,124 @@ class PlanningDebug(BaseModel):
     angle_scores: list[PlanningDebugAngleScore] = Field(default_factory=list)
 
 
+class ContentStrategy(BaseModel):
+    primary_category: ContentCategory = "general"
+    secondary_categories: list[ContentCategory] = Field(default_factory=list)
+    strategy_domain: StrategyDomain = "general"
+    primary_output: PrimaryOutput = "vertical_video"
+    secondary_outputs: list[PrimaryOutput] = Field(default_factory=lambda: ["carousel"])
+    viewer_language: str = "en"
+    voiceover_mode: VoiceoverMode = "hybrid"
+    hook_style: HookStyle = "urgent"
+    pacing: Pacing = "balanced"
+    visual_policy: VisualPolicy = "real_asset_first"
+    claim_policy: ClaimPolicy = "standard_fact_voice"
+    sensitivity_level: SensitivityLevel = "medium"
+    human_review_required: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
+
+
+class StoryFactPackV3(BaseModel):
+    core_event: str = ""
+    what_changed: str = ""
+    why_now: str = ""
+    key_entities: list[str] = Field(default_factory=list)
+    key_numbers: list[str] = Field(default_factory=list)
+    key_locations: list[str] = Field(default_factory=list)
+    time_reference: str = ""
+    source_attribution: str = ""
+    evidence_level: EvidenceLevel = "full_text"
+    uncertainty_level: UncertaintyLevel = "confirmed"
+
+
+class PlanningDecision(BaseModel):
+    status: PlanningStatus = "produce"
+    story_family: StoryFamily = "general_update"
+    editorial_intent: EditorialIntent = "break"
+    layout_family: LayoutFamily = "generic_story_stack"
+    scene_count: int = Field(default=3, ge=1, le=6)
+    risk_flags: list[RiskFlag] = Field(default_factory=list)
+    reason: str = ""
+
+
+class SceneBlueprint(BaseModel):
+    goal: SceneGoal
+    visual_type: VisualType
+    must_include: list[str] = Field(default_factory=list)
+    safe_voice_rule: SafeVoiceRule = "fact_voice"
+
+
+class VerticalVideoBlueprint(BaseModel):
+    target_duration_seconds: int = Field(default=15, ge=8, le=45)
+    scene_blueprints: list[SceneBlueprint] = Field(default_factory=list)
+
+
+class CarouselBlueprint(BaseModel):
+    slide_count: int = Field(default=4, ge=2, le=8)
+    cover_angle: str = ""
+    slide_goals: list[str] = Field(default_factory=list)
+
+
+class OutputBlueprint(BaseModel):
+    vertical_video: VerticalVideoBlueprint | None = None
+    carousel: CarouselBlueprint | None = None
+
+
+class VerticalVideoSceneOutput(BaseModel):
+    scene_id: str
+    start_second: int = 0
+    duration_seconds: int = 0
+    headline: str
+    body: str = ""
+    voiceover: str = ""
+    overlay_text: str = ""
+    visual_direction: str = ""
+
+
+class VerticalVideoOutput(BaseModel):
+    aspect_ratio: Literal["9:16"] = "9:16"
+    target_platforms: list[Literal["youtube_shorts", "instagram_reels", "tiktok"]] = Field(
+        default_factory=lambda: ["youtube_shorts", "instagram_reels", "tiktok"]
+    )
+    duration_seconds: int = 30
+    hook: str = ""
+    title: str = ""
+    tts_script: str = ""
+    overlay_text: list[str] = Field(default_factory=list)
+    scenes: list[VerticalVideoSceneOutput] = Field(default_factory=list)
+    caption: str = ""
+    hashtags: list[str] = Field(default_factory=list)
+
+
+class CarouselCardOutput(BaseModel):
+    title: str
+    body: str = ""
+    kicker: str = ""
+    image_prompt: str = ""
+
+
+class CarouselOutput(BaseModel):
+    cover: CarouselCardOutput
+    slides: list[CarouselCardOutput] = Field(default_factory=list)
+    caption: str = ""
+    hashtags: list[str] = Field(default_factory=list)
+
+
+class ImagePromptOutput(BaseModel):
+    usage: Literal["cover", "scene", "supporting"] = "supporting"
+    prompt: str
+
+
+class PlatformOutputs(BaseModel):
+    vertical_video: VerticalVideoOutput | None = None
+    carousel: CarouselOutput | None = None
+    image_prompts: list[ImagePromptOutput] = Field(default_factory=list)
+
+
 class TopicBrief(BaseModel):
     topic_id: str
     category: str
+    secondary_categories: list[ContentCategory] = Field(default_factory=list)
     aggregation_type: Literal["shared", "unique"]
     story_language: str = "en"
     editorial_type: str = "report"
@@ -152,6 +380,11 @@ class TopicBrief(BaseModel):
     video_prompt_parts: VideoPromptParts
     video_plan: VideoPlan
     video_content: VideoContent | None = None
+    strategy: ContentStrategy = Field(default_factory=ContentStrategy)
+    platform_outputs: PlatformOutputs = Field(default_factory=PlatformOutputs)
+    story_fact_pack: StoryFactPackV3 = Field(default_factory=StoryFactPackV3)
+    planning_decision: PlanningDecision = Field(default_factory=PlanningDecision)
+    output_blueprint: OutputBlueprint = Field(default_factory=OutputBlueprint)
     remotion_storyboard: RemotionStoryboard
     planning_debug: PlanningDebug | None = None
 

@@ -27,12 +27,16 @@ ContentCategory = Literal[
     "world",
     "politics",
     "business",
+    "economy",
     "technology",
     "sports",
-    "entertainment",
+    "culture",
+    "arts",
     "science",
+    "environment",
     "health",
     "opinion",
+    "analysis",
     "general",
 ]
 

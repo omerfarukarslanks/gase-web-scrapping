@@ -20,13 +20,17 @@ const SOURCE_CATEGORIES = [
 const CONTENT_CATEGORIES = [
   { value: 'world',         label: '🌍 Dünya' },
   { value: 'politics',      label: '🏛️ Politika' },
-  { value: 'business',      label: '💼 İş / Ekonomi' },
+  { value: 'business',      label: '💼 İş Dünyası' },
+  { value: 'economy',       label: '📈 Ekonomi' },
   { value: 'technology',    label: '💻 Teknoloji' },
   { value: 'sports',        label: '⚽ Spor' },
-  { value: 'entertainment', label: '🎬 Kültür / Sanat' },
-  { value: 'science',       label: '🔬 Bilim / Çevre' },
+  { value: 'culture',       label: '🎭 Kültür' },
+  { value: 'arts',          label: '🎨 Sanat' },
+  { value: 'science',       label: '🔬 Bilim' },
+  { value: 'environment',   label: '🌿 Çevre' },
   { value: 'health',        label: '🏥 Sağlık' },
-  { value: 'opinion',       label: '✍️ Köşe / Analiz' },
+  { value: 'opinion',       label: '✍️ Köşe' },
+  { value: 'analysis',      label: '🧠 Analiz' },
   { value: 'general',       label: '📰 Genel' },
 ];
 

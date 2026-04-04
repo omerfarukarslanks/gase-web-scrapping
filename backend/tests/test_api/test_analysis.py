@@ -9,6 +9,8 @@ from app.models.article import Article
 from app.models.source import Source
 from app.models.topic_feedback import TopicFeedback
 from app.schemas.analysis import (
+    ContentStrategy,
+    PlanningDecision,
     RemotionStoryboard,
     TopicBrief,
     TopicRepresentativeArticle,
@@ -33,9 +35,14 @@ from app.services.topic_analysis import (
     build_story_fact_pack,
     build_topic_from_llm_payload,
     build_video_prompt_from_parts,
+    coerce_output_blueprint,
+    coerce_planning_decision,
+    coerce_story_fact_pack_v3,
     coerce_video_plan,
     evaluate_video_quality,
     get_recent_articles_for_analysis,
+    infer_story_family,
+    make_topic_analysis_entry,
     normalize_analysis_category,
     tokenize,
 )
@@ -580,6 +587,426 @@ def test_build_topic_from_llm_payload_selects_primary_angle_and_attaches_plannin
     assert topic.planning_debug.primary_angle_type == "news_update"
     assert topic.planning_debug.alternate_angle_type == "competition_context"
     assert topic.video_plan.scenes[0].headline == "Isak is back in training"
+
+
+def test_ollama_topic_payload_validator_accepts_planner_first_topics() -> None:
+    analyzer = OllamaTopicAnalyzer()
+
+    assert analyzer._topic_payload_is_valid(
+        {
+            "article_ids": ["abc-123"],
+            "story_fact_pack": {"core_event": "A concrete update"},
+            "planning_decision": {"status": "produce", "story_family": "general_update"},
+            "strategy": {"primary_category": "general", "primary_output": "vertical_video"},
+        }
+    )
+
+
+def test_build_topic_from_llm_payload_hydrates_planner_first_fields_and_applies_review_override() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Wisconsin mosque president detained by ICE after leaving home",
+            summary="Supporters say Salah Sarsour was detained by ICE agents in Milwaukee.",
+            content_text=(
+                "Salah Sarsour, president of Wisconsin's largest mosque, was detained by ICE agents in Milwaukee. "
+                "Supporters and attorneys say he was targeted for speech related to Israel and is being held in Indiana. "
+                "Attorneys said he is a legal permanent resident and are seeking his release."
+            ),
+            source_name="PBS",
+            source_slug="pbs",
+            normalized_category="general",
+        ),
+        make_prepared_article(
+            title="Supporters call for release after ICE detains Milwaukee mosque leader",
+            summary="Attorneys said the detention raises immigration and speech concerns.",
+            content_text=(
+                "Attorneys said the detention raises immigration and speech concerns after ICE agents took Sarsour into custody. "
+                "Supporters gathered in Milwaukee and local officials criticized the arrest."
+            ),
+            source_name="AP",
+            source_slug="ap",
+            normalized_category="general",
+        ),
+    ]
+    cluster_lookup = {str(item.article.id): item for item in cluster}
+    payload = {
+        "article_ids": [str(item.article.id) for item in cluster],
+        "story_fact_pack": {
+            "core_event": "Salah Sarsour was detained by ICE agents in Milwaukee.",
+            "what_changed": "Supporters are now demanding his release after the detention.",
+            "why_now": "Attorneys say the case raises immigration and free-speech concerns.",
+            "key_entities": ["Salah Sarsour", "ICE", "Islamic Society of Milwaukee"],
+            "key_numbers": ["53", "30 years"],
+            "key_locations": ["Milwaukee", "Indiana"],
+            "time_reference": "Monday",
+            "source_attribution": "Supporters and attorneys say",
+            "evidence_level": "full_text",
+            "uncertainty_level": "mixed",
+        },
+        "planning_decision": {
+            "status": "produce",
+            "story_family": "legal_case",
+            "editorial_intent": "explain",
+            "layout_family": "document_context_stack",
+            "scene_count": 4,
+            "risk_flags": [],
+            "reason": "Model thinks this can publish directly.",
+        },
+        "strategy": {
+            "primary_category": "politics",
+            "secondary_categories": ["analysis"],
+            "strategy_domain": "crime_legal",
+            "primary_output": "carousel",
+            "secondary_outputs": [],
+            "viewer_language": "en",
+            "voiceover_mode": "hybrid",
+            "hook_style": "analysis",
+            "pacing": "measured",
+            "visual_policy": "quote_visual",
+            "claim_policy": "attributed_claims",
+            "sensitivity_level": "high",
+            "human_review_required": False,
+            "review_reasons": [],
+        },
+        "output_blueprint": {
+            "vertical_video": {
+                "target_duration_seconds": 12,
+                "scene_blueprints": [
+                    {
+                        "goal": "hook",
+                        "visual_type": "portrait",
+                        "must_include": ["Salah Sarsour"],
+                        "safe_voice_rule": "attributed",
+                    }
+                ],
+            },
+            "carousel": {
+                "slide_count": 4,
+                "cover_angle": "Detention case",
+                "slide_goals": ["what happened", "supporters say", "legal posture", "what next"],
+            },
+        },
+    }
+
+    topic = build_topic_from_llm_payload(cluster_lookup, payload, [], aggregation_type="shared")
+
+    assert topic is not None
+    assert topic.category == "politics"
+    assert topic.story_fact_pack.core_event == "Salah Sarsour was detained by ICE agents in Milwaukee."
+    assert topic.story_fact_pack.uncertainty_level == "mixed"
+    assert topic.planning_decision.story_family == "legal_case"
+    assert topic.planning_decision.status == "review"
+    assert "legal_allegation" in topic.planning_decision.risk_flags
+    assert topic.strategy.primary_output == "carousel"
+    assert topic.strategy.human_review_required is True
+    assert topic.platform_outputs.vertical_video is None
+    assert topic.platform_outputs.carousel is not None
+    assert len(topic.platform_outputs.carousel.slides) == 4
+    assert any("Milwaukee" in slide.body or "ICE" in slide.body for slide in topic.platform_outputs.carousel.slides)
+    assert topic.output_blueprint.carousel is not None
+    assert topic.output_blueprint.vertical_video is None
+    assert topic.output_blueprint.carousel.slide_goals == [
+        "what happened",
+        "supporters say",
+        "legal posture",
+        "what next",
+    ]
+
+
+def test_coerce_story_fact_pack_v3_normalizes_lists_and_invalid_enums() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Rescue crews pull five survivors from rough seas off Puerto Rico",
+            summary="Coast Guard crews rescued five people after vessels capsized off Puerto Rico.",
+            content_text=(
+                "The Coast Guard and Puerto Rico police rescued five people after two boats capsized in rough seas. "
+                "All five survivors were treated for minor injuries after the nighttime operation."
+            ),
+            source_name="CBS News",
+            source_slug="cbsnews",
+            normalized_category="general",
+        ),
+        make_prepared_article(
+            title="Night rescue saves five after capsized boats off Puerto Rico",
+            summary="Five survivors were rescued after a nighttime operation off Puerto Rico.",
+            content_text=(
+                "Rescue crews saved five people in darkness and rough seas near Puerto Rico after a capsizing incident."
+            ),
+            source_name="AP",
+            source_slug="ap",
+            normalized_category="general",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="general",
+        headline_tr="Porto Riko aciklarinda gece yarisi kurtarma operasyonu",
+        summary_tr="İki teknenin alabora olmasindan sonra bes kisi sag kurtarildi.",
+        key_points_tr=["Sahil Guvenlik ve polis ekipleri ortak operasyon yuruttu."],
+        why_it_matters_tr="Operasyon agir deniz sartlarinda tamamlandi ve tum kurtulanlar hastaneye ulasti.",
+        scene_specs=[
+            {
+                "headline": "Bes kisi rough seas icinden kurtarildi",
+                "body": "Kurtarma ekipleri gece karanliginda operasyon yuruttu.",
+                "key_figures": ["5 survivors"],
+            }
+        ],
+    )
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=topic.category,
+        headline=topic.headline_tr,
+        summary=topic.summary_tr,
+        key_points=topic.key_points_tr,
+    )
+
+    story_fact_pack = coerce_story_fact_pack_v3(
+        {
+            "core_event": "Five people were rescued after two boats capsized off Puerto Rico.",
+            "what_changed": "The rescue operation concluded with all survivors brought ashore.",
+            "key_entities": ["Coast Guard", "Puerto Rico police", "Coast Guard"],
+            "key_numbers": ["5", "5", "2"],
+            "key_locations": ["Puerto Rico", "Puerto Rico", "San Juan"],
+            "evidence_level": "unsupported_value",
+            "uncertainty_level": "not_a_level",
+        },
+        topic=topic,
+        cluster=cluster,
+        fact_pack=fact_pack,
+    )
+
+    assert story_fact_pack.core_event == "Five people were rescued after two boats capsized off Puerto Rico."
+    assert story_fact_pack.key_entities == ["Coast Guard", "Puerto Rico police"]
+    assert story_fact_pack.key_numbers == ["5", "2"]
+    assert story_fact_pack.key_locations == ["Puerto Rico", "San Juan"]
+    assert story_fact_pack.evidence_level in {"full_text", "summary_only", "headline_only"}
+    assert story_fact_pack.evidence_level != "unsupported_value"
+    assert story_fact_pack.uncertainty_level in {"confirmed", "mixed", "speculative"}
+    assert story_fact_pack.uncertainty_level != "not_a_level"
+
+
+def test_infer_story_family_classifies_coventry_style_match_as_result_update() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Coventry City 3-2 Derby County: Jack Rudoni at the double",
+            summary="Jack Rudoni scored twice on his return from injury as Coventry beat Derby 3-2.",
+            content_text=(
+                "Coventry City beat Derby County 3-2 as Jack Rudoni scored twice after returning from injury. "
+                "Frank Onyeka opened the scoring before Ben Brereton Diaz equalised. "
+                "Rudoni then struck in the 68th and 80th minutes to secure the win."
+            ),
+            source_name="Sky Sports",
+            source_slug="skysports",
+            normalized_category="sports",
+        ),
+        make_prepared_article(
+            title="Rudoni double sends Coventry closer to promotion",
+            summary="Coventry moved closer to promotion with a 3-2 win over Derby.",
+            content_text=(
+                "Rudoni scored twice after coming off the bench and Coventry moved another step closer to promotion."
+            ),
+            source_name="BBC Sport",
+            source_slug="bbcsport",
+            normalized_category="sports",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="Coventry Derby'yi 3-2 gecti, Rudoni maci cevirdi",
+        summary_tr="Jack Rudoni sakatlik donusunde cift golle Coventry'yi tasidi.",
+        key_points_tr=[
+            "Coventry Derby'yi 3-2 yendi.",
+            "Rudoni 68 ve 80. dakikalarda gol atti.",
+        ],
+        why_it_matters_tr="Sonuc Coventry'nin yukselis yarisi icin dogrudan etki yaratti.",
+        scene_specs=[
+            {
+                "headline": "Rudoni cift golle geri dondu",
+                "body": "Coventry sakatlik donusu gelen oyuncusuyla maci kazandi.",
+                "key_figures": ["3-2", "Rudoni"],
+                "key_data": "3-2",
+            }
+        ],
+    )
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=topic.category,
+        headline=topic.headline_tr,
+        summary=topic.summary_tr,
+        key_points=topic.key_points_tr,
+    )
+
+    assert infer_story_family(topic=topic, cluster=cluster, fact_pack=fact_pack) == "result_update"
+
+
+def test_coerce_planning_decision_enforces_review_for_betting_pick_and_filters_invalid_values() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Weekend Lock: Yakhyaev vs Ribeiro to not start round two",
+            summary="A betting pick says the UFC bout should end before round two.",
+            content_text=(
+                "Weekend Lock backs Abdul Rakhman Yakhyaev vs Brendson Ribeiro to not start round two at -300. "
+                "The article says Yakhyaev is a fast starter and asks readers for their most confident betting lock."
+            ),
+            source_name="Yahoo Sports",
+            source_slug="yahoosports",
+            normalized_category="sports",
+        ),
+        make_prepared_article(
+            title="UFC betting column backs early finish in Vegas",
+            summary="A prediction column points to an early finish in the featured fight.",
+            content_text=(
+                "The prediction focuses on round props and method-of-victory odds for the matchup in Las Vegas."
+            ),
+            source_name="MMA Mania",
+            source_slug="mmamania",
+            normalized_category="sports",
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        category="sports",
+        headline_tr="Haftanin bankosu: Yakhyaev-Ribeiro ikinci raundu gormez mi?",
+        summary_tr="Yazi mazin erken bitecegini savunuyor ve okuyuculara kendi bahis kilidini soruyor.",
+        key_points_tr=["Tahmin, macin ikinci raundu gormeyecegi yonunde."],
+        why_it_matters_tr="Bahis odakli bu icerik daha temkinli paketlenmeli.",
+        scene_specs=[
+            {
+                "headline": "Weekend Lock erken bitis ariyor",
+                "body": "Yazi ikinci raund oncesi bitis bahsini one cikariyor.",
+                "key_figures": ["-300"],
+            }
+        ],
+    )
+    fact_pack = build_story_fact_pack(
+        cluster,
+        category=topic.category,
+        headline=topic.headline_tr,
+        summary=topic.summary_tr,
+        key_points=topic.key_points_tr,
+    )
+
+    decision = coerce_planning_decision(
+        {
+            "status": "produce",
+            "story_family": "betting_pick",
+            "layout_family": "totally_invalid_layout",
+            "risk_flags": ["not_real", "gambling_content"],
+            "reason": "Model tried to publish it directly.",
+        },
+        topic=topic,
+        cluster=cluster,
+        fact_pack=fact_pack,
+    )
+
+    assert decision.story_family == "betting_pick"
+    assert decision.status == "review"
+    assert decision.layout_family == "quote_context_stack"
+    assert "gambling_content" in decision.risk_flags
+    assert "not_real" not in decision.risk_flags
+
+
+def test_coerce_output_blueprint_trims_vertical_blueprint_to_scene_count() -> None:
+    decision = PlanningDecision(
+        status="produce",
+        story_family="result_update",
+        editorial_intent="break",
+        layout_family="scoreboard_stack",
+        scene_count=2,
+        risk_flags=[],
+        reason="Result story.",
+    )
+    strategy = ContentStrategy(
+        primary_category="sports",
+        secondary_categories=[],
+        strategy_domain="sports",
+        primary_output="vertical_video",
+        secondary_outputs=["carousel"],
+        viewer_language="en",
+        voiceover_mode="native",
+        hook_style="urgent",
+        pacing="fast",
+        visual_policy="scoreboard",
+        claim_policy="standard_fact_voice",
+        sensitivity_level="low",
+        human_review_required=False,
+        review_reasons=[],
+    )
+
+    blueprint = coerce_output_blueprint(
+        {
+            "vertical_video": {
+                "target_duration_seconds": 12,
+                "scene_blueprints": [
+                    {"goal": "hook", "visual_type": "scoreboard", "must_include": ["result"], "safe_voice_rule": "fact_voice"},
+                    {"goal": "context", "visual_type": "action_photo", "must_include": ["turning point"], "safe_voice_rule": "fact_voice"},
+                    {"goal": "impact", "visual_type": "data_card", "must_include": ["table"], "safe_voice_rule": "fact_voice"},
+                ],
+            },
+            "carousel": {
+                "slide_count": 4,
+                "cover_angle": "match result",
+                "slide_goals": ["what happened", "turning point", "table impact", "what next"],
+            },
+        },
+        decision=decision,
+        strategy=strategy,
+    )
+
+    assert blueprint.vertical_video is not None
+    assert len(blueprint.vertical_video.scene_blueprints) == 2
+    assert blueprint.vertical_video.target_duration_seconds == 12
+    assert blueprint.carousel is not None
+    assert blueprint.carousel.slide_goals == ["what happened", "turning point", "table impact", "what next"]
+
+
+def test_build_topic_from_legacy_payload_hydrates_planner_defaults_for_rescue_story() -> None:
+    cluster = [
+        make_prepared_article(
+            title="3 federal agents, 2 boaters rescued after vessels capsize off Puerto Rico",
+            summary="Five people were rescued after two boats capsized off Puerto Rico.",
+            content_text=(
+                "The Coast Guard and Puerto Rico police rescued five people after two boats capsized in rough seas. "
+                "A rescue swimmer was lowered from a helicopter and all survivors were treated for minor injuries."
+            ),
+            source_name="CBS News",
+            source_slug="cbsnews",
+            normalized_category="general",
+        ),
+        make_prepared_article(
+            title="Night rescue saves five after capsized vessels off Puerto Rico",
+            summary="A nighttime rescue operation saved five people in rough seas.",
+            content_text=(
+                "Rescue crews kept visual contact with all five people in the water before bringing them safely ashore."
+            ),
+            source_name="AP",
+            source_slug="ap",
+            normalized_category="general",
+        ),
+    ]
+    cluster_lookup = {str(item.article.id): item for item in cluster}
+    payload = {
+        "article_ids": [str(item.article.id) for item in cluster],
+        "headline_tr": "Porto Riko aciklarinda film gibi gece kurtarmasi",
+        "summary_tr": "Alabora olan iki teknenin ardindan bes kisi dalgalar arasindan sag kurtarildi.",
+        "key_points_tr": [
+            "Kurtarma operasyonu Sahil Guvenlik ve polis helikopterleriyle yapildi.",
+            "Tum kurtulanlar hafif yarali olarak kiyiya ulastirildi.",
+        ],
+        "why_it_matters_tr": "Agir hava kosullarinda tamamlanan operasyon zincirleme bir kurtarma hikayesine donustu.",
+    }
+
+    topic = build_topic_from_llm_payload(cluster_lookup, payload, [], aggregation_type="shared")
+
+    assert topic is not None
+    assert topic.story_fact_pack.core_event
+    assert topic.planning_decision.story_family == "rescue_operation"
+    assert topic.planning_decision.status == "produce"
+    assert topic.planning_decision.layout_family == "rescue_sequence_stack"
+    assert topic.strategy.primary_output == "vertical_video"
+    assert topic.output_blueprint.vertical_video is not None
+    assert topic.platform_outputs.vertical_video is not None
 
 
 def test_evaluate_video_quality_rejects_cross_story_contamination() -> None:
@@ -1194,9 +1621,243 @@ async def test_get_recent_articles_for_analysis_caps_articles_per_source(
 def test_normalize_analysis_category_maps_values() -> None:
     assert normalize_analysis_category("Science and Technology", "general") == "technology"
     assert normalize_analysis_category("MoneyWatch", "general") == "business"
-    assert normalize_analysis_category(None, "finance") == "business"
+    assert normalize_analysis_category("Entertainment", "general") == "culture"
+    assert normalize_analysis_category(None, "finance") == "economy"
     assert normalize_analysis_category(None, "sports") == "sports"
     assert normalize_analysis_category("Unknown label", None) == "general"
+
+
+def test_make_topic_analysis_entry_applies_health_strategy_review_guardrails() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Doctors flag dosing concerns after weight-loss treatment trend",
+            summary="Doctors urged caution after a popular weight-loss treatment spread rapidly online.",
+            source_name="Reuters",
+            source_slug="reuters",
+            normalized_category="health",
+            content_text=(
+                "Doctors urged caution after online videos encouraged patients to change dosage schedules without supervision. "
+                "Hospitals said some patients arrived with severe side effects after following unverified medical advice."
+            ),
+        ),
+        make_prepared_article(
+            title="Hospitals warn viral dosage advice can trigger serious side effects",
+            summary="Hospitals said patients should not adjust treatment plans without a clinician.",
+            source_name="AP",
+            source_slug="ap",
+            normalized_category="health",
+            content_text=(
+                "Hospitals said patients should not adjust treatment plans without a clinician because symptoms can escalate quickly. "
+                "Health officials said guidance must come from licensed professionals."
+            ),
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        headline_tr="Doctors warn against viral dosage advice",
+        summary_tr="Hospitals say patients should not change treatment dosage based on social posts.",
+        why_it_matters_tr="Unverified medical advice can create immediate health risks and push hospitals into emergency response.",
+        key_points_tr=[
+            "Doctors say dosage changes need clinical supervision.",
+            "Hospitals reported severe side effects after online advice spread.",
+        ],
+        category="health",
+        scene_specs=[
+            {
+                "headline": "Doctors warn against viral dosage advice",
+                "body": "Hospitals say patients should not change treatment plans without a clinician.",
+                "key_figures": ["Doctors", "Hospitals"],
+            },
+            {
+                "headline": "Unverified advice can trigger severe side effects",
+                "body": "Health officials said dosage guidance must come from licensed professionals.",
+                "key_figures": ["Health officials"],
+            },
+        ],
+    )
+
+    entry = make_topic_analysis_entry(topic, cluster=cluster)
+
+    assert entry.topic.strategy.primary_category == "health"
+    assert entry.topic.strategy.human_review_required is True
+    assert entry.topic.video_plan.master_format == "16:9"
+    assert entry.quality_status == "review"
+    assert entry.video_quality_status in {"review", "reject"}
+    assert "health_content_requires_review" in entry.topic.review_reasons
+
+
+def test_make_topic_analysis_entry_marks_schedule_listing_as_carousel_only() -> None:
+    cluster = [
+        make_prepared_article(
+            title='"Face the Nation with Margaret Brennan" guests for April 5, 2026',
+            summary="This week's guests include Democratic Gov. Wes Moore of Maryland and Archbishop Timothy Broglio.",
+            source_name="CBS News",
+            source_slug="cbsnews",
+            normalized_category="general",
+            content_text=(
+                "Here are the guests for Sunday, April 5, on CBS News' Face the Nation. "
+                "Guests include Gov. Wes Moore and Archbishop Timothy Broglio. "
+                "The program airs at 10:30 a.m. ET and streams at 12:30 p.m. ET."
+            ),
+        ),
+        make_prepared_article(
+            title="Sunday political show lineup features Wes Moore and Timothy Broglio",
+            summary="The panel and guest list for Sunday morning are now set.",
+            source_name="AP",
+            source_slug="ap",
+            normalized_category="general",
+            content_text=(
+                "The Sunday lineup is now set, with guests including Gov. Wes Moore and Archbishop Timothy Broglio. "
+                "The show airs Sunday morning and will stream later in the day."
+            ),
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        headline_tr="Face the Nation guests for April 5",
+        summary_tr="Wes Moore and Timothy Broglio are among this week's guests on the CBS program.",
+        why_it_matters_tr="The guest list previews the main institutional and political talking points for Sunday.",
+        key_points_tr=[
+            "Guests include Gov. Wes Moore and Archbishop Timothy Broglio.",
+            "The program airs Sunday morning and streams later in the day.",
+        ],
+        category="general",
+        scene_specs=[
+            {
+                "headline": "This week's guest lineup is set",
+                "body": "CBS says the Sunday program will feature Gov. Wes Moore and Archbishop Timothy Broglio.",
+            },
+            {
+                "headline": "The panel follows later in the program",
+                "body": "The full show airs on Sunday and streams later in the day.",
+            },
+        ],
+    )
+
+    entry = make_topic_analysis_entry(topic, cluster=cluster)
+
+    assert entry.topic.planning_decision.story_family == "schedule_listing"
+    assert entry.topic.planning_decision.status == "carousel_only"
+    assert entry.topic.strategy.primary_output == "carousel"
+    assert entry.topic.video_plan.master_format == "16:9"
+    assert entry.topic.output_blueprint.carousel is not None
+    assert entry.topic.output_blueprint.vertical_video is None
+
+
+def test_make_topic_analysis_entry_marks_conflict_breaking_for_review() -> None:
+    cluster = [
+        make_prepared_article(
+            title="US fighter jet down in Iran as search continues for missing crew member",
+            summary="Officials said one crew member was rescued while another remains missing.",
+            source_name="ABC News",
+            source_slug="abcnews",
+            normalized_category="world",
+            content_text=(
+                "A U.S. fighter jet appears to have been shot down over Iranian territory, officials said. "
+                "One crew member was rescued, while the status of another remains unknown. "
+                "Rescue helicopters also came under incoming fire during the search."
+            ),
+        ),
+        make_prepared_article(
+            title="Officials say search continues after US warplane goes down over Iran",
+            summary="The incident marks a dangerous new point in the conflict, officials said.",
+            source_name="CBS News",
+            source_slug="cbsnews",
+            normalized_category="world",
+            content_text=(
+                "Officials said the aircraft was downed during the conflict and that rescue efforts are ongoing. "
+                "The missing crew member has not yet been located."
+            ),
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        headline_tr="US fighter jet goes down over Iran",
+        summary_tr="Officials say one crew member was rescued and a search is still underway for another.",
+        why_it_matters_tr="The incident marks a dangerous escalation point and remains an active search-and-rescue story.",
+        key_points_tr=[
+            "Officials say one crew member was rescued.",
+            "The search for another crew member is still underway.",
+        ],
+        category="world",
+        scene_specs=[
+            {
+                "headline": "US fighter jet goes down over Iran",
+                "body": "Officials said one crew member was rescued while another remains missing.",
+                "key_figures": ["Officials"],
+            },
+            {
+                "headline": "Rescue effort continues under fire",
+                "body": "Officials said helicopters involved in the search also took incoming fire.",
+                "key_figures": ["Rescue crews"],
+            },
+        ],
+    )
+
+    entry = make_topic_analysis_entry(topic, cluster=cluster)
+
+    assert entry.topic.planning_decision.story_family == "conflict_breaking"
+    assert entry.topic.planning_decision.status == "review"
+    assert "conflict_or_casualty" in entry.topic.planning_decision.risk_flags
+    assert entry.topic.strategy.primary_output == "vertical_video"
+    assert entry.topic.strategy.human_review_required is True
+    assert entry.quality_status == "review"
+    assert entry.topic.output_blueprint.vertical_video is not None
+    assert entry.topic.platform_outputs.vertical_video is not None
+    assert len(entry.topic.platform_outputs.vertical_video.scenes) == len(
+        entry.topic.output_blueprint.vertical_video.scene_blueprints
+    )
+    assert entry.topic.platform_outputs.image_prompts
+
+
+def test_make_topic_analysis_entry_skips_letters_style_roundups() -> None:
+    cluster = [
+        make_prepared_article(
+            title="Fly me to the moon - or at least to Luton | Brief letters",
+            summary="Readers react to moon travel, trains and mint sauce in a letters roundup.",
+            source_name="The Guardian",
+            source_slug="guardian",
+            normalized_category="science",
+            content_text=(
+                "Artemis II has successfully taken off to begin its journey to the far side of the moon. "
+                "Meanwhile, our grandson has been unable to travel by train from Manchester to Luton. "
+                "Brief letters also discuss mint sauce and a wordsearch."
+            ),
+        ),
+        make_prepared_article(
+            title="Brief letters: Moon mission and train frustrations",
+            summary="A short roundup of reader responses to recent stories.",
+            source_name="AP",
+            source_slug="ap",
+            normalized_category="science",
+            content_text=(
+                "Brief letters react to the moon mission and unrelated daily-life topics. "
+                "The roundup includes short responses from multiple readers."
+            ),
+        ),
+    ]
+    topic = make_video_validation_topic(
+        cluster,
+        headline_tr="Brief letters on moon travel and trains",
+        summary_tr="A letters roundup reacts to recent stories with short reader submissions.",
+        why_it_matters_tr="The content is a multi-topic letters format rather than a single concrete development.",
+        key_points_tr=[
+            "The roundup mixes moon-mission and train complaints.",
+            "The format collects unrelated short reader responses.",
+        ],
+        category="science",
+        scene_specs=[
+            {
+                "headline": "Readers weigh in on several topics",
+                "body": "The roundup mixes the moon mission with travel complaints and other brief reactions.",
+            },
+        ],
+    )
+
+    entry = make_topic_analysis_entry(topic, cluster=cluster)
+
+    assert entry.topic.planning_decision.status == "skip"
+    assert entry.video_quality_status == "reject"
 
 
 def test_build_candidate_clusters_groups_related_titles() -> None:

@@ -18,6 +18,21 @@ export default function RemotionPreviewPage() {
     () => Math.max(FPS * 8, deferredPayload.durationSeconds * FPS),
     [deferredPayload.durationSeconds]
   );
+  const isVertical = deferredPayload.videoPlan.master_format === '9:16';
+  const compositionWidth = isVertical ? 1080 : 1280;
+  const compositionHeight = isVertical ? 1920 : 720;
+  const playerAspectRatio = isVertical ? '9 / 16' : '16 / 9';
+  const playerStyle = isVertical
+    ? {
+        width: 'min(100%, 420px)',
+        maxWidth: '100%',
+        aspectRatio: playerAspectRatio,
+        margin: '0 auto',
+      }
+    : {
+        width: '100%',
+        aspectRatio: playerAspectRatio,
+      };
 
   const handleApply = () => {
     try {
@@ -113,20 +128,27 @@ export default function RemotionPreviewPage() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-slate-950">
+          <div
+            className={`overflow-hidden rounded-[28px] border border-slate-200 bg-slate-950 ${
+              isVertical ? 'mx-auto w-full max-w-[420px]' : ''
+            }`}
+          >
             <Player
               component={PromptVideo}
               inputProps={{ payload: deferredPayload }}
               durationInFrames={durationInFrames}
-              compositionWidth={1280}
-              compositionHeight={720}
+              compositionWidth={compositionWidth}
+              compositionHeight={compositionHeight}
               fps={FPS}
               controls
-              style={{ width: '100%', aspectRatio: '16 / 9' }}
+              style={playerStyle}
             />
           </div>
 
           <div className="mt-5 flex flex-wrap gap-2 text-xs text-slate-500">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 font-semibold">
+              {deferredPayload.videoPlan.master_format}
+            </span>
             <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 font-semibold">
               {payload.videoPlan.duration_seconds}s
             </span>
@@ -147,6 +169,34 @@ export default function RemotionPreviewPage() {
             </summary>
             <p className="mt-3 text-sm leading-7 text-slate-700">{payload.promptText}</p>
           </details>
+
+          {payload.platformOutputs?.carousel ? (
+            <details className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 px-5 py-4">
+              <summary className="cursor-pointer list-none text-sm font-semibold text-slate-800">
+                Carousel Preview
+              </summary>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    {payload.platformOutputs.carousel.cover.kicker}
+                  </p>
+                  <p className="mt-2 text-lg font-semibold text-slate-900">{payload.platformOutputs.carousel.cover.title}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{payload.platformOutputs.carousel.cover.body}</p>
+                </div>
+                {payload.platformOutputs.carousel.slides.map((slide, index) => (
+                  <div key={`${slide.title}-${index}`} className="rounded-3xl border border-slate-200 bg-white p-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{slide.kicker}</p>
+                    <p className="mt-2 text-base font-semibold text-slate-900">{slide.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{slide.body}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                <p className="font-semibold text-slate-900">Caption</p>
+                <p className="mt-2 leading-6">{payload.platformOutputs.carousel.caption}</p>
+              </div>
+            </details>
+          ) : null}
 
           <details className="mt-4 rounded-3xl border border-slate-200 bg-slate-950 px-5 py-4 text-white">
             <summary className="cursor-pointer list-none text-sm font-semibold text-white">

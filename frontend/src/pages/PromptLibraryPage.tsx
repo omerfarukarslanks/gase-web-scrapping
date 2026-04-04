@@ -22,17 +22,65 @@ import type {
   TopicLatestFeedback,
 } from '../types/analysis';
 
+const categoryLabels: Record<string, string> = {
+  world: 'Dunya',
+  politics: 'Politika',
+  business: 'Is',
+  economy: 'Ekonomi',
+  technology: 'Teknoloji',
+  sports: 'Spor',
+  culture: 'Kultur',
+  arts: 'Sanat',
+  science: 'Bilim',
+  environment: 'Cevre',
+  health: 'Saglik',
+  opinion: 'Kose',
+  analysis: 'Analiz',
+  general: 'Genel',
+};
+
+function labelCategory(value: string): string {
+  return categoryLabels[value] ?? value;
+}
+
+function labelStrategyValue(value: string): string {
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function plannerStatusClass(value: string): string {
+  switch (value) {
+    case 'produce':
+      return 'bg-emerald-50 text-emerald-700';
+    case 'review':
+      return 'bg-amber-50 text-amber-700';
+    case 'carousel_only':
+      return 'bg-indigo-50 text-indigo-700';
+    case 'skip':
+      return 'bg-rose-50 text-rose-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+}
+
 const categoryOptions = [
   { value: '', label: 'Tum konular' },
   { value: 'world', label: 'Dunya' },
   { value: 'politics', label: 'Politika' },
-  { value: 'business', label: 'Ekonomi' },
+  { value: 'business', label: 'Is' },
+  { value: 'economy', label: 'Ekonomi' },
   { value: 'technology', label: 'Teknoloji' },
   { value: 'sports', label: 'Spor' },
-  { value: 'entertainment', label: 'Kultur' },
+  { value: 'culture', label: 'Kultur' },
+  { value: 'arts', label: 'Sanat' },
   { value: 'science', label: 'Bilim' },
+  { value: 'environment', label: 'Cevre' },
   { value: 'health', label: 'Saglik' },
-  { value: 'opinion', label: 'Analiz' },
+  { value: 'opinion', label: 'Kose' },
+  { value: 'analysis', label: 'Analiz' },
   { value: 'general', label: 'Genel' },
 ];
 
@@ -110,6 +158,8 @@ function TopicCard({
   topic,
   moderationMode,
   onCopyJson,
+  onCopyVerticalOutput,
+  onCopyCarouselOutput,
   onOpenPreview,
   onCopyPrompt,
   onSaveFeedback,
@@ -120,6 +170,8 @@ function TopicCard({
   topic: TopicBrief;
   moderationMode: boolean;
   onCopyJson: (topic: TopicBrief) => void;
+  onCopyVerticalOutput: (topic: TopicBrief) => void;
+  onCopyCarouselOutput: (topic: TopicBrief) => void;
   onOpenPreview: (topic: TopicBrief) => void;
   onCopyPrompt: (topic: TopicBrief) => void;
   onSaveFeedback: (topic: TopicBrief, label: FeedbackLabel, note: string | null) => void;
@@ -128,6 +180,15 @@ function TopicCard({
   deletePending: boolean;
 }) {
   const [note, setNote] = useState(topic.latest_feedback?.note ?? '');
+  const secondaryCategories = topic.secondary_categories.map((category) => labelCategory(category));
+  const strategy = topic.strategy;
+  const planningDecision = topic.planning_decision;
+  const storyFactPack = topic.story_fact_pack;
+  const outputBlueprint = topic.output_blueprint;
+  const plannerVerticalCount = outputBlueprint?.vertical_video?.scene_blueprints.length ?? 0;
+  const plannerCarouselCount = outputBlueprint?.carousel?.slide_goals.length ?? 0;
+  const plannerRiskFlags = planningDecision?.risk_flags ?? [];
+  const plannerStatusLabel = planningDecision ? labelStrategyValue(planningDecision.status) : null;
 
   useEffect(() => {
     setNote(topic.latest_feedback?.note ?? '');
@@ -139,14 +200,57 @@ function TopicCard({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
-              {topic.category}
+              {labelCategory(topic.category)}
             </span>
+            {secondaryCategories.map((category) => (
+              <span
+                key={category}
+                className="inline-flex items-center rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600"
+              >
+                {category}
+              </span>
+            ))}
             <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
               {topic.source_count} kaynak
             </span>
             <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
               guven {(topic.confidence * 100).toFixed(0)}%
             </span>
+            <span className="inline-flex items-center rounded-full bg-fuchsia-50 px-3 py-1 text-xs font-semibold text-fuchsia-700">
+              {labelStrategyValue(strategy.strategy_domain)}
+            </span>
+            <span className="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+              {labelStrategyValue(strategy.primary_output)}
+            </span>
+            {planningDecision ? (
+              <span
+                className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${plannerStatusClass(planningDecision.status)}`}
+              >
+                planner {plannerStatusLabel}
+              </span>
+            ) : null}
+            {planningDecision ? (
+              <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+                {labelStrategyValue(planningDecision.story_family)}
+              </span>
+            ) : null}
+            {planningDecision ? (
+              <span className="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                {labelStrategyValue(planningDecision.layout_family)}
+              </span>
+            ) : null}
+            <span className="inline-flex items-center rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
+              izleyici dili {strategy.viewer_language}
+            </span>
+            {strategy.human_review_required ? (
+              <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                review gerekli
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                publishable akisi
+              </span>
+            )}
             {moderationMode ? (
               <>
                 <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
@@ -233,6 +337,10 @@ function TopicCard({
                   <p className="mt-2 text-base font-semibold text-white">{topic.video_plan.pacing_hint}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                  <p className="uppercase tracking-[0.18em] text-slate-500">Format</p>
+                  <p className="mt-2 text-base font-semibold text-white">{topic.video_plan.master_format}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
                   <p className="uppercase tracking-[0.18em] text-slate-500">Sources</p>
                   <p className="mt-2 text-base font-semibold text-white">{topic.video_plan.source_visibility}</p>
                 </div>
@@ -253,8 +361,145 @@ function TopicCard({
                   </div>
                 ))}
               </div>
+              {planningDecision || outputBlueprint ? (
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Planner</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-300">
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Status</p>
+                      <p className="mt-2 text-sm font-semibold text-white">
+                        {planningDecision ? labelStrategyValue(planningDecision.status) : '-'}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Family</p>
+                      <p className="mt-2 text-sm font-semibold text-white">
+                        {planningDecision ? labelStrategyValue(planningDecision.story_family) : '-'}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Vertical BP</p>
+                      <p className="mt-2 text-sm font-semibold text-white">{plannerVerticalCount}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                      <p className="uppercase tracking-[0.18em] text-slate-500">Carousel BP</p>
+                      <p className="mt-2 text-sm font-semibold text-white">{plannerCarouselCount}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
+
+          {planningDecision || storyFactPack || outputBlueprint ? (
+            <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Planning Decision</p>
+                {planningDecision ? (
+                  <>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${plannerStatusClass(planningDecision.status)}`}
+                      >
+                        {labelStrategyValue(planningDecision.status)}
+                      </span>
+                      <span className="inline-flex items-center rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+                        {labelStrategyValue(planningDecision.story_family)}
+                      </span>
+                      <span className="inline-flex items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                        {labelStrategyValue(planningDecision.layout_family)}
+                      </span>
+                      <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                        {planningDecision.scene_count} scene
+                      </span>
+                    </div>
+                    {plannerRiskFlags.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {plannerRiskFlags.map((flag) => (
+                          <span
+                            key={flag}
+                            className="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700"
+                          >
+                            {labelStrategyValue(flag)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                    {planningDecision.reason ? (
+                      <p className="mt-4 text-sm leading-6 text-slate-600">{planningDecision.reason}</p>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">Planner karari bulunmuyor.</p>
+                )}
+
+                {storyFactPack ? (
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Core event</p>
+                      <p className="mt-2 text-sm font-semibold text-slate-900">{storyFactPack.core_event}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">What changed</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{storyFactPack.what_changed}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Why now</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">{storyFactPack.why_now || '-'}</p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Output Blueprint</p>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl bg-white px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Vertical scenes</p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">{plannerVerticalCount}</p>
+                  </div>
+                  <div className="rounded-2xl bg-white px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Carousel slides</p>
+                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                      {outputBlueprint?.carousel?.slide_count ?? plannerCarouselCount}
+                    </p>
+                  </div>
+                </div>
+                {outputBlueprint?.vertical_video?.scene_blueprints.length ? (
+                  <div className="mt-4 space-y-2">
+                    {outputBlueprint.vertical_video.scene_blueprints.slice(0, 3).map((scene, index) => (
+                      <div key={`${scene.goal}-${index}`} className="rounded-2xl bg-white px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {labelStrategyValue(scene.goal)} · {labelStrategyValue(scene.visual_type)}
+                        </p>
+                        <p className="mt-2 text-sm font-medium text-slate-900">
+                          {scene.must_include.join(' · ') || 'Must include yok'}
+                        </p>
+                        <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">
+                          {labelStrategyValue(scene.safe_voice_rule)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {outputBlueprint?.carousel?.slide_goals.length ? (
+                  <div className="mt-4 rounded-2xl bg-white px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Carousel goals</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {outputBlueprint.carousel.slide_goals.slice(0, 4).map((goal) => (
+                        <span
+                          key={goal}
+                          className="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-700"
+                        >
+                          {goal}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {moderationMode ? (
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -407,6 +652,20 @@ function TopicCard({
             JSON Kopyala
           </button>
           <button
+            onClick={() => onCopyVerticalOutput(topic)}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            <Clipboard className="h-4 w-4" />
+            Vertical Kopyala
+          </button>
+          <button
+            onClick={() => onCopyCarouselOutput(topic)}
+            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            <Clipboard className="h-4 w-4" />
+            Carousel Kopyala
+          </button>
+          <button
             onClick={() => onCopyPrompt(topic)}
             className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
           >
@@ -503,6 +762,24 @@ export default function PromptLibraryPage() {
     const payload = buildRemotionPayload(topic);
     await copyText(JSON.stringify(payload, null, 2));
     setMessage('JSON payload panoya kopyalandi.');
+  };
+
+  const handleCopyVerticalOutput = async (topic: TopicBrief) => {
+    if (!topic.platform_outputs.vertical_video) {
+      setMessage('Bu topic icin vertical output hazir degil.');
+      return;
+    }
+    await copyText(JSON.stringify(topic.platform_outputs.vertical_video, null, 2));
+    setMessage('Vertical video output panoya kopyalandi.');
+  };
+
+  const handleCopyCarouselOutput = async (topic: TopicBrief) => {
+    if (!topic.platform_outputs.carousel) {
+      setMessage('Bu topic icin carousel output hazir degil.');
+      return;
+    }
+    await copyText(JSON.stringify(topic.platform_outputs.carousel, null, 2));
+    setMessage('Carousel output panoya kopyalandi.');
   };
 
   const handleCopyPrompt = async (topic: TopicBrief) => {
@@ -673,8 +950,10 @@ export default function PromptLibraryPage() {
           <section key={group.category} className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{group.category}</p>
-                <h3 className="text-2xl font-bold tracking-tight text-slate-900">{group.topics.length} prompt</h3>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{labelCategory(group.category)}</p>
+                <h3 className="text-2xl font-bold tracking-tight text-slate-900">
+                  {labelCategory(group.category)} · {group.topics.length} prompt
+                </h3>
               </div>
               <button
                 onClick={() => navigate('/video-preview')}
@@ -692,6 +971,8 @@ export default function PromptLibraryPage() {
                   topic={topic}
                   moderationMode={moderationMode}
                   onCopyJson={handleCopyJson}
+                  onCopyVerticalOutput={handleCopyVerticalOutput}
+                  onCopyCarouselOutput={handleCopyCarouselOutput}
                   onCopyPrompt={handleCopyPrompt}
                   onOpenPreview={handleOpenPreview}
                   onSaveFeedback={handleSaveFeedback}
