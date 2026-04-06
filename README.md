@@ -56,11 +56,11 @@ SCRAPE_INTERVAL_MINUTES=60
 DEFAULT_RATE_LIMIT_RPM=10
 USER_AGENT=GaseNewsScraper/1.0
 GUARDIAN_API_KEY=5e577f2a-eb6f-4c98-8102-29f84b9b7436
-OLLAMA_BASE_URL=http://192.168.1.104:11434
+OLLAMA_BASE_URL=http://192.168.1.100:11434
 OLLAMA_MODEL=qwen3:14b
 ANALYSIS_MIN_SHARED_SOURCES=2
 ANALYSIS_MAX_ARTICLES_PER_RUN=120
-ANALYSIS_TEXT_CHAR_LIMIT=1200
+ANALYSIS_TEXT_CHAR_LIMIT=10000
 CORS_ORIGINS=["http://localhost:3000","http://localhost:80"]
 ```
 
@@ -86,7 +86,7 @@ docker compose up -d
 Son 1 saat haber analizi endpoint'i bu makinede Docker icinde Ollama calistirmak yerine agdaki diger bilgisayardaki Ollama sunucusuna baglanir:
 
 ```bash
-OLLAMA_BASE_URL=http://192.168.1.104:11434
+OLLAMA_BASE_URL=http://192.168.1.100:11434
 ```
 
 Uzak makinede `qwen3:14b` modelinin hazir ve erisilebilir oldugundan emin ol.

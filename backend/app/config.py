@@ -28,9 +28,21 @@ class Settings(BaseSettings):
     ANALYSIS_MIN_SHARED_SOURCES: int = 2
     ANALYSIS_MAX_ARTICLES_PER_RUN: int = 120
     ANALYSIS_MAX_ARTICLES_PER_SOURCE: int = 15
-    ANALYSIS_TEXT_CHAR_LIMIT: int = 1200
+    ANALYSIS_TEXT_CHAR_LIMIT: int = 10000
     VISUAL_ASSET_MAX_PER_TOPIC: int = 3
     VISUAL_ASSET_FETCH_TIMEOUT_SECONDS: float = 5.0
+
+    # TTS
+    ELEVENLABS_API_KEY: str = ""
+    TTS_AUDIO_DIR: str = "static/audio"
+
+    # Image generation (Stable Diffusion XL)
+    SDXL_BASE_URL: str = "http://192.168.1.103:8000"
+    IMAGE_OUTPUT_DIR: str = "static/images"
+
+    # Video renderer service
+    RENDERER_URL: str = "http://renderer:3001"
+    VIDEO_OUTPUT_DIR: str = "static/videos"
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:80"]

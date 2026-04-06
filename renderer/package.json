@@ -1,0 +1,16 @@
+{
+  "name": "remotion-renderer-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.443",
+    "@remotion/renderer": "4.0.443",
+    "express": "^4.19.0",
+    "remotion": "4.0.443",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

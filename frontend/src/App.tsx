@@ -11,6 +11,7 @@ import SourcesPage from './pages/SourcesPage';
 const ArticleDetailPage = lazy(() => import('./pages/ArticleDetailPage'));
 const PromptLibraryPage = lazy(() => import('./pages/PromptLibraryPage'));
 const RemotionPreviewPage = lazy(() => import('./pages/RemotionPreviewPage'));
+const ContentStudioPage = lazy(() => import('./pages/ContentStudioPage'));
 
 function DeferredPage({ children }: { children: ReactNode }) {
   return <Suspense fallback={<LoadingSpinner />}>{children}</Suspense>;
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="prompts" element={<DeferredPage><PromptLibraryPage /></DeferredPage>} />
             <Route path="sources" element={<SourcesPage />} />
             <Route path="video-preview" element={<DeferredPage><RemotionPreviewPage /></DeferredPage>} />
+            <Route path="content-studio/:articleId" element={<DeferredPage><ContentStudioPage /></DeferredPage>} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -1,5 +1,6 @@
 import {
   AbsoluteFill,
+  Audio,
   Sequence,
   interpolate,
   spring,
@@ -1673,7 +1674,13 @@ function VideoPlanSceneView({
   );
 }
 
-export function PromptVideo({ payload }: { payload: RemotionPromptPayload }) {
+export function PromptVideo({
+  payload,
+  audioUrl,
+}: {
+  payload: RemotionPromptPayload;
+  audioUrl?: string;
+}) {
   const frame = useCurrentFrame();
   const { durationInFrames, fps } = useVideoConfig();
   const theme = categoryThemes[payload.category] ?? categoryThemes.general;
@@ -1693,6 +1700,7 @@ export function PromptVideo({ payload }: { payload: RemotionPromptPayload }) {
         overflow: 'hidden',
       }}
     >
+      {audioUrl && <Audio src={audioUrl} volume={1} />}
       <BackgroundMotif theme={theme} frame={frame} />
 
       {scenes.map((scene, index) => {

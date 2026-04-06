@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ExternalLink, Lock, RefreshCw } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, Clapperboard, ExternalLink, Lock, RefreshCw } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { fetchArticle } from '../api/articles';
+import { generateFromArticle } from '../api/content';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { useState } from 'react';
 
 function formatDateTime(value: string | null): string {
   if (!value) return 'Tarih yok';
@@ -19,6 +21,22 @@ function formatContent(content: string | null): string[] {
 
 export default function ArticleDetailPage() {
   const { articleId } = useParams<{ articleId: string }>();
+  const navigate = useNavigate();
+  const [contentGenerating, setContentGenerating] = useState(false);
+
+  const handleGenerateContent = async () => {
+    if (!data || contentGenerating) return;
+    setContentGenerating(true);
+    try {
+      const result = await generateFromArticle(data as Record<string, unknown>);
+      navigate(`/content-studio/${articleId}`, { state: result });
+    } catch {
+      // Navigate anyway — ContentStudioPage will retry on its own
+      navigate(`/content-studio/${articleId}`);
+    } finally {
+      setContentGenerating(false);
+    }
+  };
 
   const { data, isLoading, isFetching, isError } = useQuery({
     queryKey: ['article-detail', articleId],
@@ -104,6 +122,18 @@ export default function ArticleDetailPage() {
               <ExternalLink className="h-4 w-4" />
               Orijinal kaynaga git
             </a>
+            <button
+              onClick={handleGenerateContent}
+              disabled={contentGenerating}
+              className="inline-flex items-center gap-2 rounded-2xl bg-sky-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-sky-600 disabled:opacity-60"
+            >
+              {contentGenerating ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Clapperboard className="h-4 w-4" />
+              )}
+              {contentGenerating ? 'Üretiliyor…' : 'İçerik Oluştur'}
+            </button>
           </div>
         </div>
       </section>

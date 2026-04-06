@@ -19,11 +19,8 @@ def compact_text(value: str | None) -> str:
     return " ".join((value or "").split()).strip()
 
 
-def truncate_text(value: str, limit: int = 2000) -> str:
-    compacted = compact_text(value)
-    if len(compacted) <= limit:
-        return compacted
-    return f"{compacted[: max(0, limit - 3)].rstrip()}..."
+def truncate_text(value: str, limit: int = 99999) -> str:
+    return compact_text(value)
 
 
 @dataclass(slots=True)
@@ -71,13 +68,13 @@ class RemotionStoryboardService:
                     duration_seconds=scene.duration_seconds,
                     layout_hint=scene.layout_hint,
                     kicker=scene.purpose.upper(),
-                    headline=truncate_text(scene.headline, 2000),
-                    body=truncate_text(scene.body, 2000),
+                    headline=truncate_text(scene.headline, 10000),
+                    body=truncate_text(scene.body, 10000),
                     voiceover=getattr(scene, "voiceover", scene.body) or scene.headline,
                     source_line=scene.source_line,
                     asset_ids=scene.asset_ids[:2],
-                    visual_elements=[truncate_text(scene.visual_direction, 2000)] if compact_text(scene.visual_direction) else [],
-                    bullet_points=[truncate_text(point, 2000) for point in scene.supporting_points[:4]],
+                    visual_elements=[truncate_text(scene.visual_direction, 10000)] if compact_text(scene.visual_direction) else [],
+                    bullet_points=[truncate_text(point, 10000) for point in scene.supporting_points[:10]],
                     stats=stats[:2],
                     chips=scene.key_figures[:4],
                 )

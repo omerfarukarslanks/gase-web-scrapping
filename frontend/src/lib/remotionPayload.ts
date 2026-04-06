@@ -1,30 +1,12 @@
 import type {
-  CarouselOutput,
-  CarouselBlueprint,
-  ContentCategory,
-  ContentStrategy,
-  EditorialIntent,
-  LayoutFamily,
-  OutputBlueprint,
-  PlatformOutputs,
-  PlanningDecision,
-  PlanningStatus,
   RemotionPromptPayload,
   RemotionStoryboard,
-  RiskFlag,
-  SafeVoiceRule,
-  SceneBlueprint,
-  SceneGoal,
   StoryboardScene,
   StoryboardSceneType,
   StoryboardStat,
-  StoryFactPackV3,
-  StoryFamily,
   TopicBrief,
   VideoContent,
-  VerticalVideoBlueprint,
   VisualAsset,
-  VisualType,
   VideoPlan,
   VideoPlanLayoutHint,
   VideoPlanPurpose,
@@ -47,78 +29,6 @@ const VALID_LAYOUTS = new Set<VideoPlanLayoutHint>([
   'full-bleed',
 ]);
 const VALID_SOURCE_VISIBILITY = new Set<VideoPlanSourceVisibility>(['none', 'subtle', 'contextual']);
-const VALID_MASTER_FORMATS = new Set<'16:9' | '9:16'>(['16:9', '9:16']);
-const VALID_STORY_FAMILIES = new Set<StoryFamily>([
-  'result_update',
-  'profile_feature',
-  'preview_watchlist',
-  'schedule_listing',
-  'betting_pick',
-  'conflict_breaking',
-  'disaster_update',
-  'legal_case',
-  'court_ruling',
-  'consumer_impact',
-  'institutional_review',
-  'obituary_profile',
-  'culture_controversy',
-  'commentary_recap',
-  'policy_shift',
-  'social_trend',
-  'opinion_editorial',
-  'rescue_operation',
-  'general_update',
-]);
-const VALID_PLANNING_STATUS = new Set<PlanningStatus>(['produce', 'review', 'carousel_only', 'skip']);
-const VALID_EDITORIAL_INTENTS = new Set<EditorialIntent>([
-  'break',
-  'explain',
-  'profile',
-  'memorial',
-  'debate',
-  'guide',
-  'warning',
-  'watchlist',
-]);
-const VALID_LAYOUT_FAMILIES = new Set<LayoutFamily>([
-  'scoreboard_stack',
-  'hero_detail_stack',
-  'panel_listing_stack',
-  'map_casualty_stack',
-  'document_context_stack',
-  'quote_context_stack',
-  'price_impact_stack',
-  'timeline_stack',
-  'memorial_profile_stack',
-  'reaction_split_stack',
-  'rescue_sequence_stack',
-  'generic_story_stack',
-]);
-const VALID_RISK_FLAGS = new Set<RiskFlag>([
-  'conflict_or_casualty',
-  'legal_allegation',
-  'election_process',
-  'medical_claim',
-  'minor_involved',
-  'opinion_content',
-  'gambling_content',
-  'hate_speech_context',
-  'obituary_sensitive',
-  'speculative_claim',
-]);
-const VALID_SCENE_GOALS = new Set<SceneGoal>(['hook', 'setup', 'main_fact', 'context', 'impact', 'reaction', 'close']);
-const VALID_VISUAL_TYPES = new Set<VisualType>([
-  'action_photo',
-  'portrait',
-  'scoreboard',
-  'map',
-  'document',
-  'quote_card',
-  'data_card',
-  'timeline',
-  'symbolic',
-]);
-const VALID_SAFE_VOICE_RULES = new Set<SafeVoiceRule>(['fact_voice', 'attributed', 'opinion_labeled']);
 
 const PURPOSE_TO_STORYBOARD_TYPE: Record<VideoPlanPurpose, StoryboardSceneType> = {
   hook: 'hook',
@@ -128,233 +38,6 @@ const PURPOSE_TO_STORYBOARD_TYPE: Record<VideoPlanPurpose, StoryboardSceneType> 
   comparison: 'story',
   takeaway: 'outro',
   close: 'outro',
-};
-
-const DEFAULT_STRATEGY_BY_CATEGORY: Record<string, ContentStrategy> = {
-  world: {
-    primary_category: 'world',
-    secondary_categories: [],
-    strategy_domain: 'world',
-    primary_output: 'vertical_video',
-    secondary_outputs: ['carousel'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'urgent',
-    pacing: 'fast',
-    visual_policy: 'real_asset_first',
-    claim_policy: 'attributed_claims',
-    sensitivity_level: 'high',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  politics: {
-    primary_category: 'politics',
-    secondary_categories: [],
-    strategy_domain: 'politics',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'authority',
-    pacing: 'balanced',
-    visual_policy: 'real_asset_first',
-    claim_policy: 'attributed_claims',
-    sensitivity_level: 'high',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  business: {
-    primary_category: 'business',
-    secondary_categories: [],
-    strategy_domain: 'business',
-    primary_output: 'vertical_video',
-    secondary_outputs: ['carousel'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'authority',
-    pacing: 'balanced',
-    visual_policy: 'data_card',
-    claim_policy: 'standard_fact_voice',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  economy: {
-    primary_category: 'economy',
-    secondary_categories: [],
-    strategy_domain: 'economy',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'explainer',
-    pacing: 'measured',
-    visual_policy: 'data_card',
-    claim_policy: 'analysis_attribution',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  technology: {
-    primary_category: 'technology',
-    secondary_categories: [],
-    strategy_domain: 'technology',
-    primary_output: 'vertical_video',
-    secondary_outputs: ['carousel'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'curiosity',
-    pacing: 'balanced',
-    visual_policy: 'demo_explainer',
-    claim_policy: 'standard_fact_voice',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  sports: {
-    primary_category: 'sports',
-    secondary_categories: [],
-    strategy_domain: 'sports',
-    primary_output: 'vertical_video',
-    secondary_outputs: ['carousel'],
-    viewer_language: 'en',
-    voiceover_mode: 'native',
-    hook_style: 'urgent',
-    pacing: 'fast',
-    visual_policy: 'scoreboard',
-    claim_policy: 'standard_fact_voice',
-    sensitivity_level: 'low',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  culture: {
-    primary_category: 'culture',
-    secondary_categories: [],
-    strategy_domain: 'culture',
-    primary_output: 'vertical_video',
-    secondary_outputs: ['carousel'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'human',
-    pacing: 'balanced',
-    visual_policy: 'human_centered',
-    claim_policy: 'standard_fact_voice',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  arts: {
-    primary_category: 'arts',
-    secondary_categories: [],
-    strategy_domain: 'arts',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'text_only',
-    hook_style: 'human',
-    pacing: 'measured',
-    visual_policy: 'quote_visual',
-    claim_policy: 'analysis_attribution',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  science: {
-    primary_category: 'science',
-    secondary_categories: [],
-    strategy_domain: 'science',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'explainer',
-    pacing: 'measured',
-    visual_policy: 'data_card',
-    claim_policy: 'analysis_attribution',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  environment: {
-    primary_category: 'environment',
-    secondary_categories: [],
-    strategy_domain: 'environment',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'urgent',
-    pacing: 'balanced',
-    visual_policy: 'restrained_drama',
-    claim_policy: 'analysis_attribution',
-    sensitivity_level: 'high',
-    human_review_required: false,
-    review_reasons: [],
-  },
-  health: {
-    primary_category: 'health',
-    secondary_categories: [],
-    strategy_domain: 'health',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'explainer',
-    pacing: 'measured',
-    visual_policy: 'data_card',
-    claim_policy: 'medical_caution',
-    sensitivity_level: 'high',
-    human_review_required: true,
-    review_reasons: ['health_content_requires_review'],
-  },
-  opinion: {
-    primary_category: 'opinion',
-    secondary_categories: [],
-    strategy_domain: 'opinion',
-    primary_output: 'carousel',
-    secondary_outputs: [],
-    viewer_language: 'en',
-    voiceover_mode: 'text_only',
-    hook_style: 'analysis',
-    pacing: 'measured',
-    visual_policy: 'quote_visual',
-    claim_policy: 'opinion_attribution',
-    sensitivity_level: 'high',
-    human_review_required: true,
-    review_reasons: ['opinion_content_requires_review'],
-  },
-  analysis: {
-    primary_category: 'analysis',
-    secondary_categories: [],
-    strategy_domain: 'analysis',
-    primary_output: 'carousel',
-    secondary_outputs: ['vertical_video'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'analysis',
-    pacing: 'measured',
-    visual_policy: 'data_card',
-    claim_policy: 'analysis_attribution',
-    sensitivity_level: 'high',
-    human_review_required: true,
-    review_reasons: ['analysis_content_requires_review'],
-  },
-  general: {
-    primary_category: 'general',
-    secondary_categories: [],
-    strategy_domain: 'general',
-    primary_output: 'vertical_video',
-    secondary_outputs: ['carousel'],
-    viewer_language: 'en',
-    voiceover_mode: 'hybrid',
-    hook_style: 'urgent',
-    pacing: 'balanced',
-    visual_policy: 'real_asset_first',
-    claim_policy: 'standard_fact_voice',
-    sensitivity_level: 'medium',
-    human_review_required: false,
-    review_reasons: [],
-  },
 };
 
 function cleanString(value: unknown, fallback = ''): string {
@@ -371,12 +54,7 @@ function dedupe(items: string[]): string[] {
 }
 
 function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : `${value.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
-}
-
-function cleanEnumValue<T extends string>(value: unknown, valid: Set<T>, fallback: T): T {
-  const normalized = cleanString(value, fallback) as T;
-  return valid.has(normalized) ? normalized : fallback;
+  return value;
 }
 
 function extractScore(items: string[]): string {
@@ -390,172 +68,7 @@ function extractScore(items: string[]): string {
 function clampDuration(value: unknown, fallback = 30): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(30, Math.max(8, Math.round(numeric)));
-}
-
-function cleanCategory(value: unknown, fallback: ContentCategory = 'general'): ContentCategory {
-  const normalized = cleanString(typeof value === 'string' ? value.toLowerCase() : '', fallback);
-  const valid: ContentCategory[] = [
-    'world',
-    'politics',
-    'business',
-    'economy',
-    'technology',
-    'sports',
-    'culture',
-    'arts',
-    'science',
-    'environment',
-    'health',
-    'opinion',
-    'analysis',
-    'general',
-  ];
-  return (valid.includes(normalized as ContentCategory) ? normalized : fallback) as ContentCategory;
-}
-
-function cleanStrategy(value: unknown, category: string): ContentStrategy {
-  const fallback = DEFAULT_STRATEGY_BY_CATEGORY[cleanCategory(category)] ?? DEFAULT_STRATEGY_BY_CATEGORY.general;
-  if (!value || typeof value !== 'object') return fallback;
-  const raw = value as Record<string, unknown>;
-  const primary = cleanCategory(raw.primary_category, fallback.primary_category);
-  const primaryOutput = cleanString(raw.primary_output, fallback.primary_output) as ContentStrategy['primary_output'];
-  const secondaryOutputs = dedupe(
-    cleanStringArray(raw.secondary_outputs as unknown[])
-      .map((item) => cleanString(item).toLowerCase())
-      .filter((item) => item === 'vertical_video' || item === 'carousel')
-      .filter((item) => item !== primaryOutput)
-  ) as ContentStrategy['secondary_outputs'];
-
-  return {
-    ...fallback,
-    primary_category: primary,
-    secondary_categories: cleanStringArray(raw.secondary_categories as unknown[]).map((item) => cleanCategory(item, primary)).filter((item) => item !== primary).slice(0, 3),
-    strategy_domain: cleanString(raw.strategy_domain, fallback.strategy_domain) as ContentStrategy['strategy_domain'],
-    primary_output: primaryOutput,
-    secondary_outputs: secondaryOutputs.length ? secondaryOutputs : fallback.secondary_outputs,
-    viewer_language: cleanString(raw.viewer_language, fallback.viewer_language),
-    voiceover_mode: cleanString(raw.voiceover_mode, fallback.voiceover_mode) as ContentStrategy['voiceover_mode'],
-    hook_style: cleanString(raw.hook_style, fallback.hook_style) as ContentStrategy['hook_style'],
-    pacing: cleanString(raw.pacing, fallback.pacing) as ContentStrategy['pacing'],
-    visual_policy: cleanString(raw.visual_policy, fallback.visual_policy) as ContentStrategy['visual_policy'],
-    claim_policy: cleanString(raw.claim_policy, fallback.claim_policy) as ContentStrategy['claim_policy'],
-    sensitivity_level: cleanString(raw.sensitivity_level, fallback.sensitivity_level) as ContentStrategy['sensitivity_level'],
-    human_review_required: Boolean(raw.human_review_required ?? fallback.human_review_required),
-    review_reasons: cleanStringArray(raw.review_reasons),
-  };
-}
-
-function cleanStoryFactPack(value: unknown): StoryFactPackV3 | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const coreEvent = cleanString(raw.core_event);
-  if (!coreEvent) return null;
-
-  return {
-    core_event: coreEvent,
-    what_changed: cleanString(raw.what_changed, coreEvent),
-    why_now: cleanString(raw.why_now),
-    key_entities: cleanStringArray(raw.key_entities).slice(0, 6),
-    key_numbers: cleanStringArray(raw.key_numbers).slice(0, 6),
-    key_locations: cleanStringArray(raw.key_locations).slice(0, 5),
-    time_reference: cleanString(raw.time_reference),
-    source_attribution: cleanString(raw.source_attribution),
-    evidence_level: cleanEnumValue(raw.evidence_level, new Set(['full_text', 'summary_only', 'headline_only']), 'summary_only'),
-    uncertainty_level: cleanEnumValue(raw.uncertainty_level, new Set(['confirmed', 'mixed', 'speculative']), 'mixed'),
-  };
-}
-
-function inferStoryFamilyFromStrategy(strategy: ContentStrategy): StoryFamily {
-  if (strategy.primary_category === 'sports') return 'result_update';
-  if (strategy.primary_category === 'opinion') return 'opinion_editorial';
-  if (strategy.primary_category === 'health') return 'consumer_impact';
-  if (strategy.primary_output === 'carousel') return 'general_update';
-  return 'general_update';
-}
-
-function inferLayoutFamilyFromStrategy(strategy: ContentStrategy): LayoutFamily {
-  switch (strategy.visual_policy) {
-    case 'scoreboard':
-      return 'scoreboard_stack';
-    case 'data_card':
-      return 'price_impact_stack';
-    case 'quote_visual':
-      return 'quote_context_stack';
-    default:
-      return strategy.primary_output === 'carousel' ? 'document_context_stack' : 'hero_detail_stack';
-  }
-}
-
-function cleanPlanningDecision(value: unknown, strategy: ContentStrategy): PlanningDecision | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-
-  return {
-    status: cleanEnumValue(raw.status, VALID_PLANNING_STATUS, strategy.primary_output === 'carousel' ? 'carousel_only' : 'produce'),
-    story_family: cleanEnumValue(raw.story_family, VALID_STORY_FAMILIES, inferStoryFamilyFromStrategy(strategy)),
-    editorial_intent: cleanEnumValue(raw.editorial_intent, VALID_EDITORIAL_INTENTS, 'explain'),
-    layout_family: cleanEnumValue(raw.layout_family, VALID_LAYOUT_FAMILIES, inferLayoutFamilyFromStrategy(strategy)),
-    scene_count: Math.max(1, Math.min(4, Math.round(Number(raw.scene_count) || 3))),
-    risk_flags: cleanStringArray(raw.risk_flags)
-      .filter((flag): flag is RiskFlag => VALID_RISK_FLAGS.has(flag as RiskFlag))
-      .slice(0, 6),
-    reason: cleanString(raw.reason),
-  };
-}
-
-function cleanSceneBlueprint(value: unknown, index: number): SceneBlueprint | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  return {
-    goal: cleanEnumValue(raw.goal, VALID_SCENE_GOALS, index === 0 ? 'hook' : index >= 2 ? 'impact' : 'context'),
-    visual_type: cleanEnumValue(raw.visual_type, VALID_VISUAL_TYPES, index === 0 ? 'action_photo' : 'data_card'),
-    must_include: cleanStringArray(raw.must_include).slice(0, 5),
-    safe_voice_rule: cleanEnumValue(raw.safe_voice_rule, VALID_SAFE_VOICE_RULES, 'fact_voice'),
-  };
-}
-
-function cleanVerticalVideoBlueprint(value: unknown): VerticalVideoBlueprint | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const sceneBlueprints = Array.isArray(raw.scene_blueprints)
-    ? raw.scene_blueprints
-        .slice(0, 4)
-        .map((entry, index) => cleanSceneBlueprint(entry, index))
-        .filter((entry): entry is SceneBlueprint => Boolean(entry))
-    : [];
-
-  if (!sceneBlueprints.length) return null;
-
-  return {
-    target_duration_seconds: clampDuration(raw.target_duration_seconds, 15),
-    scene_blueprints: sceneBlueprints,
-  };
-}
-
-function cleanCarouselBlueprint(value: unknown): CarouselBlueprint | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const slideGoals = cleanStringArray(raw.slide_goals).slice(0, 6);
-  if (!slideGoals.length) return null;
-
-  return {
-    slide_count: Math.max(1, Math.min(8, Math.round(Number(raw.slide_count) || slideGoals.length))),
-    cover_angle: cleanString(raw.cover_angle, slideGoals[0]),
-    slide_goals: slideGoals,
-  };
-}
-
-function cleanOutputBlueprint(value: unknown): OutputBlueprint | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as Record<string, unknown>;
-  const verticalVideo = cleanVerticalVideoBlueprint(raw.vertical_video);
-  const carousel = cleanCarouselBlueprint(raw.carousel);
-  if (!verticalVideo && !carousel) return null;
-  return {
-    vertical_video: verticalVideo,
-    carousel,
-  };
+  return Math.min(60, Math.max(8, Math.round(numeric)));
 }
 
 function allocateSceneDurations(total: number, count: number, requested?: number[]): number[] {
@@ -602,28 +115,6 @@ function inferSceneCount(summary: string, keyPoints: string[]): number {
   if (complexity === 'short') return 1;
   if (complexity === 'medium') return 2;
   return 3;
-}
-
-function layoutHintFromVisualType(visualType: VisualType, fallback: VideoPlanLayoutHint): VideoPlanLayoutHint {
-  switch (visualType) {
-    case 'scoreboard':
-      return 'stat';
-    case 'map':
-    case 'timeline':
-      return 'timeline';
-    case 'document':
-    case 'quote_card':
-      return 'quote';
-    case 'portrait':
-    case 'action_photo':
-      return 'full-bleed';
-    case 'data_card':
-      return 'stat';
-    case 'symbolic':
-      return 'minimal';
-    default:
-      return fallback;
-  }
 }
 
 function cleanVideoContent(value: unknown): VideoContent | null {
@@ -675,7 +166,7 @@ function defaultLayout(category: string, purpose: VideoPlanPurpose, keyData: str
 function buildVideoContentFromPlan(plan: VideoPlan): VideoContent {
   const narrative = dedupe(
     plan.scenes.map((scene) => scene.body || scene.headline).filter(Boolean)
-  ).slice(0, 3);
+  );
   const keyFigures = dedupe(plan.scenes.flatMap((scene) => scene.key_figures)).slice(0, 4);
   const keyData = plan.scenes.find((scene) => scene.key_data)?.key_data ?? '';
 
@@ -702,15 +193,15 @@ function buildStoryboardFromPlan(plan: VideoPlan): RemotionStoryboard {
       duration_seconds: scene.duration_seconds,
       layout_hint: scene.layout_hint,
       kicker: scene.purpose.toUpperCase(),
-      headline: truncate(scene.headline, 2000),
-      body: truncate(scene.body, 2000),
+      headline: scene.headline,
+      body: scene.body,
       voiceover: (scene as any).voiceover || scene.body || scene.headline,
       source_line: scene.source_line,
       asset_ids: scene.asset_ids.slice(0, 2),
-      visual_elements: scene.visual_direction ? [truncate(scene.visual_direction, 2000)] : [],
-      bullet_points: scene.supporting_points.slice(0, 4).map((point) => truncate(point, 2000)),
-      stats: stats.slice(0, 4),
-      chips: scene.key_figures.slice(0, 4),
+      visual_elements: scene.visual_direction ? [scene.visual_direction] : [],
+      bullet_points: scene.supporting_points,
+      stats: stats,
+      chips: scene.key_figures,
     };
   });
 
@@ -730,52 +221,25 @@ function buildFallbackVideoPlan(fields: {
   durationSeconds: number;
   visualAssets: VisualAsset[];
   videoContent: VideoContent | null;
-  strategy: ContentStrategy;
-  storyFactPack?: StoryFactPackV3 | null;
-  planningDecision?: PlanningDecision | null;
-  outputBlueprint?: OutputBlueprint | null;
 }): VideoPlan {
-  const preferredSceneCount =
-    fields.outputBlueprint?.vertical_video?.scene_blueprints.length ||
-    fields.planningDecision?.scene_count ||
-    inferSceneCount(fields.summary, fields.keyPoints);
-  const targetDuration =
-    fields.outputBlueprint?.vertical_video?.target_duration_seconds ??
-    fields.durationSeconds;
-  const total = clampDuration(targetDuration, 30);
+  const total = clampDuration(fields.durationSeconds, 30);
   const keyData =
-    fields.videoContent?.key_data ||
-    fields.storyFactPack?.key_numbers[0] ||
-    extractScore([fields.headline, fields.summary, ...fields.keyPoints]) ||
-    '';
-  const keyFigures = dedupe([
-    ...(fields.videoContent?.key_figures ?? []),
-    ...(fields.storyFactPack?.key_numbers ?? []),
-  ]).slice(0, 4);
-  const sceneCount = Math.max(1, Math.min(3, preferredSceneCount));
+    fields.videoContent?.key_data || extractScore([fields.headline, fields.summary, ...fields.keyPoints]) || '';
+  const keyFigures = fields.videoContent?.key_figures ?? [];
+  const sceneCount = inferSceneCount(fields.summary, fields.keyPoints);
   const sceneDurations = allocateSceneDurations(total, sceneCount, [4, 3, 2].slice(0, sceneCount));
   const primaryAssetId = fields.visualAssets[0]?.asset_id ?? '';
   const secondaryAssetId = fields.visualAssets[1]?.asset_id ?? primaryAssetId;
-  const sceneBlueprints = fields.outputBlueprint?.vertical_video?.scene_blueprints ?? [];
-  const hookBlueprint = sceneBlueprints[0] ?? null;
-  const explainBlueprint = sceneBlueprints[1] ?? null;
-  const closeBlueprint = sceneBlueprints[2] ?? sceneBlueprints[sceneBlueprints.length - 1] ?? null;
-  const hookBody = fields.storyFactPack?.what_changed || fields.summary;
-  const takeawayBody = fields.storyFactPack?.why_now || fields.whyItMatters;
-  const takeawayHeadline = fields.whyItMatters || fields.storyFactPack?.why_now || fields.headline;
 
   const scenes: VideoPlanScene[] = [
     {
       scene_id: 'scene-1',
       purpose: 'hook',
       duration_seconds: sceneDurations[0],
-      layout_hint: layoutHintFromVisualType(
-        hookBlueprint?.visual_type ?? 'action_photo',
-        defaultLayout(fields.category, 'hook', keyData, keyFigures)
-      ),
+      layout_hint: defaultLayout(fields.category, 'hook', keyData, keyFigures),
       headline: fields.videoContent?.headline || fields.headline,
-      body: hookBody,
-      voiceover: hookBody || fields.headline,
+      body: fields.summary,
+      voiceover: fields.summary || fields.headline,
       supporting_points: [],
       key_figures: keyFigures.slice(0, 4),
       key_data: keyData,
@@ -788,22 +252,16 @@ function buildFallbackVideoPlan(fields: {
   ];
 
   if (sceneCount >= 2) {
-    const layout = layoutHintFromVisualType(
-      explainBlueprint?.visual_type ?? 'data_card',
-      defaultLayout(fields.category, 'explain', keyData, keyFigures)
-    );
+    const layout = defaultLayout(fields.category, 'explain', keyData, keyFigures);
     scenes.push({
       scene_id: 'scene-2',
       purpose: 'explain',
       duration_seconds: sceneDurations[1],
       layout_hint: layout,
-      headline: fields.keyPoints[0] || fields.storyFactPack?.core_event || fields.summary,
-      body: sceneCount === 2 ? takeawayBody : '',
-      voiceover: fields.keyPoints[0] || fields.storyFactPack?.what_changed || fields.summary,
-      supporting_points: dedupe([
-        ...fields.keyPoints.slice(0, 2),
-        ...(fields.storyFactPack?.key_entities ?? []).slice(0, 2),
-      ]).slice(0, 3),
+      headline: fields.keyPoints[0] || fields.summary,
+      body: sceneCount === 2 ? fields.summary : '',
+      voiceover: fields.keyPoints[0] || fields.summary,
+      supporting_points: fields.keyPoints.slice(0, 2),
       key_figures: keyFigures.slice(0, 4),
       key_data: layout === 'stat' ? keyData : '',
       visual_direction: '',
@@ -819,13 +277,10 @@ function buildFallbackVideoPlan(fields: {
       scene_id: 'scene-3',
       purpose: 'takeaway',
       duration_seconds: sceneDurations[2],
-      layout_hint: layoutHintFromVisualType(
-        closeBlueprint?.visual_type ?? 'symbolic',
-        defaultLayout(fields.category, 'takeaway', '', keyFigures)
-      ),
-      headline: takeawayHeadline,
-      body: takeawayBody,
-      voiceover: takeawayBody || takeawayHeadline,
+      layout_hint: defaultLayout(fields.category, 'takeaway', '', keyFigures),
+      headline: fields.whyItMatters,
+      body: fields.whyItMatters,
+      voiceover: fields.whyItMatters,
       supporting_points: [],
       key_figures: keyFigures.slice(0, 3),
       key_data: '',
@@ -840,7 +295,7 @@ function buildFallbackVideoPlan(fields: {
   return {
     title: fields.videoContent?.headline || fields.headline,
     audience_mode: 'sound_off_first',
-    master_format: fields.strategy.primary_output === 'vertical_video' ? '9:16' : '16:9',
+    master_format: '16:9',
     duration_seconds: total,
     pacing_hint: inferPacing(total, sceneCount),
     source_visibility: 'none',
@@ -853,19 +308,21 @@ function cleanVideoPlanScene(value: unknown, fallback: VideoPlanScene, index: nu
   const raw = value as Record<string, unknown>;
   const purpose = cleanString(raw.purpose).toLowerCase() as VideoPlanPurpose;
   const layoutHint = cleanString(raw.layout_hint).toLowerCase() as VideoPlanLayoutHint;
-  const headline = cleanString(raw.headline);
-  if (!VALID_PURPOSES.has(purpose) || !VALID_LAYOUTS.has(layoutHint) || !headline) return null;
+  const headline = cleanString(raw.headline) || cleanString(fallback.headline) || 'Update';
+
+  const finalPurpose = VALID_PURPOSES.has(purpose) ? purpose : 'explain';
+  const finalLayout = VALID_LAYOUTS.has(layoutHint) ? layoutHint : 'full-bleed';
 
   return {
     scene_id: cleanString(raw.scene_id, `scene-${index + 1}`),
-    purpose,
+    purpose: finalPurpose,
     duration_seconds: Math.max(1, Math.round(Number(raw.duration_seconds) || fallback.duration_seconds || 1)),
-    layout_hint: layoutHint,
+    layout_hint: finalLayout,
     headline,
     body: cleanString(raw.body, fallback.body),
     voiceover: cleanString(raw.voiceover, (fallback as any).voiceover || fallback.body),
-    supporting_points: cleanStringArray(raw.supporting_points, fallback.supporting_points).slice(0, 4),
-    key_figures: cleanStringArray(raw.key_figures, fallback.key_figures).slice(0, 4),
+    supporting_points: cleanStringArray(raw.supporting_points, fallback.supporting_points),
+    key_figures: cleanStringArray(raw.key_figures, fallback.key_figures),
     key_data: cleanString(raw.key_data, fallback.key_data),
     visual_direction: cleanString(raw.visual_direction, fallback.visual_direction),
     motion_direction: cleanString(raw.motion_direction, fallback.motion_direction),
@@ -882,7 +339,6 @@ function normalizeVideoPlan(value: unknown, fallback: VideoPlan, visualAssets: V
   const fallbackScenes = fallback.scenes;
   const validAssetIds = new Set(visualAssets.map((asset) => asset.asset_id));
   const cleanedScenes = scenesInput
-    .slice(0, 4)
     .map((scene, index) => cleanVideoPlanScene(scene, fallbackScenes[Math.min(index, fallbackScenes.length - 1)], index))
     .filter((scene): scene is VideoPlanScene => Boolean(scene));
   if (!cleanedScenes.length) return fallback;
@@ -896,12 +352,13 @@ function normalizeVideoPlan(value: unknown, fallback: VideoPlan, visualAssets: V
   const sourceVisibility = cleanString(raw.source_visibility).toLowerCase() as VideoPlanSourceVisibility;
   const normalizedVisibility = VALID_SOURCE_VISIBILITY.has(sourceVisibility) ? sourceVisibility : fallback.source_visibility;
 
+  const rawFormat = cleanString(raw.master_format);
+  const masterFormat = rawFormat === '9:16' ? '9:16' : '16:9';
+
   return {
     title: cleanString(raw.title, fallback.title),
     audience_mode: 'sound_off_first',
-    master_format: VALID_MASTER_FORMATS.has(cleanString(raw.master_format, fallback.master_format) as '16:9' | '9:16')
-      ? (cleanString(raw.master_format, fallback.master_format) as '16:9' | '9:16')
-      : fallback.master_format,
+    master_format: masterFormat,
     duration_seconds: totalDuration,
     pacing_hint: cleanString(raw.pacing_hint, inferPacing(totalDuration, cleanedScenes.length)),
     source_visibility: normalizedVisibility,
@@ -958,196 +415,9 @@ function normalizeStoryboard(value: unknown, fallback: RemotionStoryboard): Remo
     : fallback;
 }
 
-function buildFallbackPlatformOutputs(fields: {
-  headline: string;
-  summary: string;
-  keyPoints: string[];
-  whyItMatters: string;
-  videoPlan: VideoPlan;
-  videoContent: VideoContent;
-  strategy: ContentStrategy;
-  storyFactPack?: StoryFactPackV3 | null;
-  planningDecision?: PlanningDecision | null;
-  outputBlueprint?: OutputBlueprint | null;
-}): PlatformOutputs {
-  const allowVertical = fields.planningDecision?.status !== 'skip' && fields.planningDecision?.status !== 'carousel_only';
-  const allowCarousel = fields.planningDecision?.status !== 'skip';
-  let startSecond = 0;
-  const verticalScenes = fields.videoPlan.scenes.map((scene) => {
-    const current = {
-      scene_id: scene.scene_id,
-      start_second: startSecond,
-      duration_seconds: scene.duration_seconds,
-      headline: scene.headline,
-      body: scene.body,
-      voiceover: scene.voiceover || scene.body || scene.headline,
-      overlay_text: scene.headline,
-      visual_direction: scene.visual_direction,
-    };
-    startSecond += scene.duration_seconds;
-    return current;
-  });
-
-  const overlayText = verticalScenes.map((scene) => scene.overlay_text).filter(Boolean).slice(0, 5);
-  const hashtags = dedupe(
-    ['#News', `#${fields.strategy.primary_category}`]
-      .concat(fields.videoContent.key_figures.slice(0, 2).map((value) => `#${value.replace(/[^A-Za-z0-9]+/g, '')}`))
-      .filter(Boolean)
-  ).slice(0, 5);
-
-  const carouselGoals = fields.outputBlueprint?.carousel?.slide_goals?.length
-    ? fields.outputBlueprint.carousel.slide_goals
-    : dedupe([...fields.keyPoints, fields.storyFactPack?.why_now ?? '', fields.whyItMatters]).filter(Boolean).slice(0, 4);
-  const carouselSlides = carouselGoals.map((body) => ({
-    title: truncate(body, 56) || fields.headline,
-    body,
-    kicker: fields.planningDecision?.story_family
-      ? fields.planningDecision.story_family.toUpperCase()
-      : fields.strategy.strategy_domain.toUpperCase(),
-    image_prompt: `Editorial visual about ${fields.headline}. Keep it clear, social-first, and text-free.`,
-  }));
-
-  return {
-    vertical_video: allowVertical
-      ? {
-          aspect_ratio: '9:16',
-          target_platforms: ['youtube_shorts', 'instagram_reels', 'tiktok'],
-          duration_seconds: fields.videoPlan.duration_seconds,
-          hook: overlayText[0] || fields.headline,
-          title: fields.videoContent.headline || fields.headline,
-          tts_script: verticalScenes.map((scene) => scene.voiceover).join(' '),
-          overlay_text: overlayText,
-          scenes: verticalScenes,
-          caption: [fields.summary, fields.whyItMatters].filter(Boolean).join(' ').trim(),
-          hashtags,
-        }
-      : null,
-    carousel: allowCarousel
-      ? {
-          cover: {
-            title: fields.headline,
-            body: fields.summary,
-            kicker: fields.outputBlueprint?.carousel?.cover_angle
-              ? truncate(fields.outputBlueprint.carousel.cover_angle, 36)
-              : fields.strategy.primary_category.toUpperCase(),
-            image_prompt: `Editorial cover visual about ${fields.headline}. Clear composition, strong focus, text-free.`,
-          },
-          slides: carouselSlides.length
-            ? carouselSlides
-            : [{
-                title: fields.headline,
-                body: fields.summary,
-                kicker: fields.strategy.primary_category.toUpperCase(),
-                image_prompt: `Editorial supporting visual about ${fields.summary || fields.headline}.`,
-              }],
-          caption: [fields.summary, fields.whyItMatters].filter(Boolean).join(' ').trim(),
-          hashtags,
-        }
-      : null,
-    image_prompts: [
-      {
-        usage: 'cover',
-        prompt: `Cinematic editorial visual about ${fields.storyFactPack?.core_event || fields.headline}. Clear hierarchy, platform-safe framing, no on-image text.`,
-      },
-      {
-        usage: 'supporting',
-        prompt: `Supporting editorial visual for ${fields.storyFactPack?.what_changed || fields.summary || fields.headline}.`,
-      },
-    ],
-  };
-}
-
-function cleanPlatformOutputs(value: unknown, fallback: PlatformOutputs): PlatformOutputs {
-  if (!value || typeof value !== 'object') return fallback;
-  const raw = value as Record<string, unknown>;
-  const vertical = raw.vertical_video && typeof raw.vertical_video === 'object' ? raw.vertical_video as Record<string, unknown> : null;
-  const carousel = raw.carousel && typeof raw.carousel === 'object' ? raw.carousel as Record<string, unknown> : null;
-  const fallbackVertical = fallback.vertical_video;
-  const fallbackCarousel = fallback.carousel;
-
-  return {
-    vertical_video: fallbackVertical
-      ? {
-          ...fallbackVertical,
-          hook: cleanString(vertical?.hook, fallbackVertical.hook),
-          title: cleanString(vertical?.title, fallbackVertical.title),
-          tts_script: cleanString(vertical?.tts_script, fallbackVertical.tts_script),
-          caption: cleanString(vertical?.caption, fallbackVertical.caption),
-          overlay_text: cleanStringArray(vertical?.overlay_text, fallbackVertical.overlay_text),
-          hashtags: cleanStringArray(vertical?.hashtags, fallbackVertical.hashtags),
-          scenes: Array.isArray(vertical?.scenes)
-            ? vertical!.scenes
-                .map((scene, index) => {
-                  if (!scene || typeof scene !== 'object') return null;
-                  const fallbackScene = fallbackVertical.scenes[Math.min(index, fallbackVertical.scenes.length - 1)];
-                  const rawScene = scene as Record<string, unknown>;
-                  return {
-                    ...fallbackScene,
-                    scene_id: cleanString(rawScene.scene_id, fallbackScene.scene_id),
-                    start_second: Math.max(0, Math.round(Number(rawScene.start_second) || fallbackScene.start_second)),
-                    duration_seconds: Math.max(1, Math.round(Number(rawScene.duration_seconds) || fallbackScene.duration_seconds)),
-                    headline: cleanString(rawScene.headline, fallbackScene.headline),
-                    body: cleanString(rawScene.body, fallbackScene.body),
-                    voiceover: cleanString(rawScene.voiceover, fallbackScene.voiceover),
-                    overlay_text: cleanString(rawScene.overlay_text, fallbackScene.overlay_text),
-                    visual_direction: cleanString(rawScene.visual_direction, fallbackScene.visual_direction),
-                  };
-                })
-                .filter(Boolean) as typeof fallbackVertical.scenes
-            : fallbackVertical.scenes,
-        }
-      : null,
-    carousel: fallbackCarousel
-      ? {
-          ...fallbackCarousel,
-          cover: carousel?.cover && typeof carousel.cover === 'object'
-            ? {
-                title: cleanString((carousel.cover as Record<string, unknown>).title, fallbackCarousel.cover.title),
-                body: cleanString((carousel.cover as Record<string, unknown>).body, fallbackCarousel.cover.body),
-                kicker: cleanString((carousel.cover as Record<string, unknown>).kicker, fallbackCarousel.cover.kicker),
-                image_prompt: cleanString((carousel.cover as Record<string, unknown>).image_prompt, fallbackCarousel.cover.image_prompt),
-              }
-            : fallbackCarousel.cover,
-          slides: Array.isArray(carousel?.slides)
-            ? carousel!.slides
-                .map((slide, index) => {
-                  if (!slide || typeof slide !== 'object') return null;
-                  const fallbackSlide = fallbackCarousel.slides[Math.min(index, fallbackCarousel.slides.length - 1)] ?? fallbackCarousel.cover;
-                  const rawSlide = slide as Record<string, unknown>;
-                  return {
-                    title: cleanString(rawSlide.title, fallbackSlide.title),
-                    body: cleanString(rawSlide.body, fallbackSlide.body),
-                    kicker: cleanString(rawSlide.kicker, fallbackSlide.kicker),
-                    image_prompt: cleanString(rawSlide.image_prompt, fallbackSlide.image_prompt),
-                  };
-                })
-                .filter(Boolean) as CarouselOutput['slides']
-            : fallbackCarousel.slides,
-          caption: cleanString(carousel?.caption, fallbackCarousel.caption),
-          hashtags: cleanStringArray(carousel?.hashtags, fallbackCarousel.hashtags),
-        }
-      : null,
-    image_prompts: Array.isArray(raw.image_prompts)
-      ? raw.image_prompts
-          .map((entry) => {
-            if (!entry || typeof entry !== 'object') return null;
-            const rawPrompt = entry as Record<string, unknown>;
-            const prompt = cleanString(rawPrompt.prompt);
-            if (!prompt) return null;
-            return {
-              usage: cleanString(rawPrompt.usage, 'supporting') as 'cover' | 'scene' | 'supporting',
-              prompt,
-            };
-          })
-          .filter(Boolean) as PlatformOutputs['image_prompts']
-      : fallback.image_prompts,
-  };
-}
-
 function buildPayloadBase(topic: {
   headline: string;
   category: string;
-  secondaryCategories?: ContentCategory[];
   summary: string;
   keyPoints: string[];
   whyItMatters: string;
@@ -1166,12 +436,7 @@ function buildPayloadBase(topic: {
   durationSeconds: number;
   visualAssets: VisualAsset[];
   videoContent: VideoContent | null;
-  strategy?: ContentStrategy | null;
-  platformOutputs?: PlatformOutputs | null;
   videoPlan?: VideoPlan | null;
-  storyFactPack?: StoryFactPackV3 | null;
-  planningDecision?: PlanningDecision | null;
-  outputBlueprint?: OutputBlueprint | null;
   storyboard?: RemotionStoryboard;
 }): RemotionPromptPayload {
   const visualAssets = dedupe(
@@ -1179,10 +444,6 @@ function buildPayloadBase(topic: {
   )
     .map((assetId) => topic.visualAssets.find((asset) => asset.asset_id === assetId) ?? null)
     .filter((asset): asset is VisualAsset => Boolean(asset));
-  const strategy = cleanStrategy(topic.strategy, topic.category);
-  const storyFactPack = cleanStoryFactPack(topic.storyFactPack);
-  const planningDecision = cleanPlanningDecision(topic.planningDecision, strategy);
-  const outputBlueprint = cleanOutputBlueprint(topic.outputBlueprint);
 
   const fallbackVideoPlan = buildFallbackVideoPlan({
     headline: topic.headline,
@@ -1194,38 +455,16 @@ function buildPayloadBase(topic: {
     durationSeconds: topic.durationSeconds,
     visualAssets,
     videoContent: topic.videoContent,
-    strategy,
-    storyFactPack,
-    planningDecision,
-    outputBlueprint,
   });
 
   const videoPlan = normalizeVideoPlan(topic.videoPlan, fallbackVideoPlan, visualAssets);
   const videoContent = topic.videoContent ?? buildVideoContentFromPlan(videoPlan);
   const fallbackStoryboard = buildStoryboardFromPlan(videoPlan);
-  const fallbackPlatformOutputs = buildFallbackPlatformOutputs({
-    headline: topic.headline,
-    summary: topic.summary,
-    keyPoints: topic.keyPoints,
-    whyItMatters: topic.whyItMatters,
-    videoPlan,
-    videoContent,
-    strategy,
-    storyFactPack,
-    planningDecision,
-    outputBlueprint,
-  });
 
   return {
     ...topic,
-    secondaryCategories: topic.secondaryCategories ?? [],
     durationSeconds: videoPlan.duration_seconds,
     visualAssets,
-    strategy,
-    platformOutputs: cleanPlatformOutputs(topic.platformOutputs, fallbackPlatformOutputs),
-    storyFactPack,
-    planningDecision,
-    outputBlueprint,
     videoPlan,
     videoContent,
     storyboard: normalizeStoryboard(topic.storyboard, fallbackStoryboard),
@@ -1236,7 +475,6 @@ export function buildRemotionPayload(topic: TopicBrief): RemotionPromptPayload {
   return buildPayloadBase({
     headline: topic.headline_tr,
     category: topic.category,
-    secondaryCategories: topic.secondary_categories,
     summary: topic.summary_tr,
     keyPoints: topic.key_points_tr,
     whyItMatters: topic.why_it_matters_tr,
@@ -1255,12 +493,7 @@ export function buildRemotionPayload(topic: TopicBrief): RemotionPromptPayload {
     durationSeconds: topic.video_prompt_parts.duration_seconds,
     visualAssets: topic.visual_assets,
     videoContent: topic.video_content,
-    strategy: topic.strategy,
-    platformOutputs: topic.platform_outputs,
     videoPlan: topic.video_plan,
-    storyFactPack: topic.story_fact_pack,
-    planningDecision: topic.planning_decision,
-    outputBlueprint: topic.output_blueprint,
     storyboard: topic.remotion_storyboard,
   });
 }
@@ -1284,38 +517,32 @@ export function parseRemotionPayload(value: unknown): RemotionPromptPayload {
   return buildPayloadBase({
     headline,
     category: cleanString(payload.category, 'general'),
-    secondaryCategories: cleanStringArray(payload.secondaryCategories ?? payload.secondary_categories).map((item) => cleanCategory(item)),
     summary,
-    keyPoints: cleanStringArray(payload.keyPoints ?? payload.key_points),
-    whyItMatters: cleanString(payload.whyItMatters ?? payload.why_it_matters, 'Bu gelisme kisa vadede gundemi etkileyebilir.'),
+    keyPoints: cleanStringArray(payload.keyPoints),
+    whyItMatters: cleanString(payload.whyItMatters, 'Bu gelisme kisa vadede gundemi etkileyebilir.'),
     sources: cleanStringArray(payload.sources),
-    promptText: cleanString(payload.promptText ?? payload.prompt_text, headline),
-    formatHint: cleanString(payload.formatHint ?? payload.format_hint, 'Editorial motion-graphics short'),
-    storyAngle: cleanString(payload.storyAngle ?? payload.story_angle, headline),
-    visualBrief: cleanString(payload.visualBrief ?? payload.visual_brief, 'Readable motion graphics with labeled facts and clear visual hierarchy.'),
-    motionTreatment: cleanString(payload.motionTreatment ?? payload.motion_treatment, 'Clean panel choreography and subtle kinetic typography.'),
-    transitionStyle: cleanString(payload.transitionStyle ?? payload.transition_style, 'Shape wipes and restrained motion transitions.'),
+    promptText: cleanString(payload.promptText, headline),
+    formatHint: cleanString(payload.formatHint, 'Editorial motion-graphics short'),
+    storyAngle: cleanString(payload.storyAngle, headline),
+    visualBrief: cleanString(payload.visualBrief, 'Readable motion graphics with labeled facts and clear visual hierarchy.'),
+    motionTreatment: cleanString(payload.motionTreatment, 'Clean panel choreography and subtle kinetic typography.'),
+    transitionStyle: cleanString(payload.transitionStyle, 'Shape wipes and restrained motion transitions.'),
     tone: cleanString(payload.tone, 'Urgent and factual'),
-    sceneSequence: cleanStringArray(payload.sceneSequence ?? payload.scene_sequence, [
+    sceneSequence: cleanStringArray(payload.sceneSequence, [
       'Open with the main headline and a bold category strap.',
       'Highlight the summary with supporting visuals and data callouts.',
       'Close with why it matters and what to watch next.',
     ]),
-    designKeywords: cleanStringArray(payload.designKeywords ?? payload.design_keywords, ['editorial motion', 'clear typography']),
-    mustInclude: cleanStringArray(payload.mustInclude ?? payload.must_include),
+    designKeywords: cleanStringArray(payload.designKeywords, ['editorial motion', 'clear typography']),
+    mustInclude: cleanStringArray(payload.mustInclude),
     avoid: cleanStringArray(payload.avoid, ['Publisher logos', 'Unsupported claims']),
-    durationSeconds: clampDuration(payload.durationSeconds ?? payload.duration_seconds, 30),
+    durationSeconds: clampDuration(payload.durationSeconds, 30),
     visualAssets: rawVisualAssets
       .map((asset: unknown, index: number) => cleanVisualAsset(asset, `asset-${index + 1}`))
       .filter((asset): asset is VisualAsset => Boolean(asset)),
-    videoContent: cleanVideoContent(payload.videoContent ?? payload.video_content),
-    strategy: (payload.strategy ?? payload.contentStrategy) as ContentStrategy | undefined,
-    platformOutputs: (payload.platformOutputs ?? payload.platform_outputs) as PlatformOutputs | undefined,
+    videoContent: cleanVideoContent(payload.videoContent),
     videoPlan: (payload.videoPlan ?? payload.video_plan) as VideoPlan | undefined,
-    storyFactPack: (payload.storyFactPack ?? payload.story_fact_pack) as StoryFactPackV3 | undefined,
-    planningDecision: (payload.planningDecision ?? payload.planning_decision) as PlanningDecision | undefined,
-    outputBlueprint: (payload.outputBlueprint ?? payload.output_blueprint) as OutputBlueprint | undefined,
-    storyboard: (payload.storyboard ?? payload.remotion_storyboard) as RemotionStoryboard | undefined,
+    storyboard: payload.storyboard as RemotionStoryboard | undefined,
   });
 }
 

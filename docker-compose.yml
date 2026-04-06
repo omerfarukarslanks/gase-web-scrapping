@@ -28,7 +28,7 @@ services:
       retries: 5
 
   # Ollama bu makinede RAM kullanmasin diye simdilik uzak makinede calisiyor.
-  # Uzak sunucu: http://192.168.1.104:11434
+  # Uzak sunucu: http://192.168.1.103:11434
   # Gerekirse tekrar acmak icin bu blogu yorumdan cikar:
   # ollama:
   #   image: ollama/ollama:latest
@@ -54,8 +54,11 @@ services:
       ANALYSIS_MAX_ARTICLES_PER_RUN: ${ANALYSIS_MAX_ARTICLES_PER_RUN:-120}
       ANALYSIS_MAX_ARTICLES_PER_SOURCE: ${ANALYSIS_MAX_ARTICLES_PER_SOURCE:-15}
       ANALYSIS_TEXT_CHAR_LIMIT: ${ANALYSIS_TEXT_CHAR_LIMIT:-1200}
+      RENDERER_URL: http://renderer:3001
     volumes:
       - ./backend:/app
+      # Shared volume: renderer writes here, API serves via /static/videos
+      - static_videos:/app/static/videos
     depends_on:
       db:
         condition: service_healthy
@@ -108,6 +111,32 @@ services:
       redis:
         condition: service_healthy
 
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+    environment:
+      PORT: 3001
+      # Entry file path inside the mounted frontend source
+      REMOTION_ENTRY: /frontend/src/remotion/entry.tsx
+      # Write rendered videos to the shared static volume
+      OUTPUT_DIR: /static/videos
+      # API base URL so renderer can resolve relative /static/... URLs
+      API_BASE_URL: http://api:8000
+      # Path to frontend node_modules for webpack module resolution
+      FRONTEND_NODE_MODULES: /frontend/node_modules
+      # Allow Chromium to run in Docker
+      DISPLAY: ""
+    volumes:
+      # Frontend source is needed so @remotion/bundler can bundle PromptVideo.tsx
+      - ./frontend:/frontend:ro
+      # Shared volume: API reads from here via /app/static/videos
+      - static_videos:/static/videos
+    ports:
+      - "3001:3001"
+    depends_on:
+      - api
+
   frontend:
     build:
       context: ./frontend
@@ -133,4 +162,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  static_videos:
   # ollama_data:
