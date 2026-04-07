@@ -580,9 +580,13 @@ async def generate_voiceover(text: str, provider: str, voice_id: str) -> Voiceov
     else:
         raise ContentGenerationError(f"Bilinmeyen TTS provider: {provider}")
 
-    # Rough duration estimate: ~150 words/min
-    word_count = len(text.split())
-    duration = round(word_count / 150 * 60, 1)
+    # Gerçek ses süresi: mutagen ile MP3 dosyasından oku
+    try:
+        from mutagen.mp3 import MP3  # type: ignore[import]
+        duration = round(MP3(str(output_path)).info.length, 1)
+    except Exception:
+        # mutagen başarısız olursa kelime sayısı tahminine düş
+        duration = round(len(text.split()) / 150 * 60, 1)
 
     return VoiceoverResponse(
         audio_url=f"/static/audio/{audio_id}.mp3",
