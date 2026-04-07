@@ -14,7 +14,6 @@ from app.config import settings
 from app.schemas.content import (
     ArticleContentResponse,
     ImageGenerateResponse,
-    ImagePrompt,
     TtsVoice,
     VoiceoverResponse,
 )
@@ -29,13 +28,55 @@ def _compact(value: str | None) -> str:
     return " ".join((value or "").split()).strip()
 
 
+_SCRAPE_ERROR_PATTERNS = re.compile(
+    r"browser extension.*blocking|video player.*loading|disable.*on this site|"
+    r"enable javascript to|javascript is required|please enable javascript|"
+    r"subscribe to read|sign in to read|log in to read|paywall|access denied",
+    re.IGNORECASE,
+)
+
+_MIN_CONTENT_LENGTH = 400  # Bu uzunluğun altındaki içerik yetersiz sayılır
+_GARBAGE_CHECK_MAX_LEN = 600  # Sadece kısa metinlerde garbage kontrolü yap
+
+
+def _is_scrape_garbage(text: str) -> bool:
+    """Metnin scraping hatası veya erişim engeli içerip içermediğini kontrol eder.
+    Uzun metinlerde (>600 karakter) garbage pattern aranmaz — gerçek içerik barındırıyor olabilir."""
+    if len(text) > _GARBAGE_CHECK_MAX_LEN:
+        return False
+    return bool(_SCRAPE_ERROR_PATTERNS.search(text))
+
+
 def _extract_article_text(article: dict[str, Any]) -> str:
-    """En zengin metin kaynağını döner: content_text > content_snippet > summary > title."""
+    """En zengin gerçek metin kaynağını döner; scraping hatalarını ve kısa içerikleri atlar."""
     for field in ("content_text", "content_snippet", "summary", "title"):
         text = _compact(str(article.get(field) or ""))
-        if text and len(text) > 60:
+        if not text:
+            continue
+        if _is_scrape_garbage(text):
+            logger.warning("Field '%s' scraping garbage içeriyor, atlanıyor.", field)
+            continue
+        if len(text) > _MIN_CONTENT_LENGTH:
             return text[:settings.ANALYSIS_TEXT_CHAR_LIMIT]
-    return _compact(str(article.get("title") or ""))
+    # Hiçbir alan yeterli değilse kısa summary veya title'a düş
+    for field in ("summary", "title"):
+        text = _compact(str(article.get(field) or ""))
+        if text:
+            return text
+    return ""
+
+
+def _detect_language(article: dict[str, Any]) -> str:
+    """content_text üzerinden dili tespit eder; başarısız olursa metadata'ya düşer."""
+    fallback = _compact(str(article.get("language") or "en")) or "en"
+    text = _compact(str(article.get("content_text") or article.get("content_snippet") or ""))
+    if len(text) < 30:
+        return fallback
+    try:
+        from langdetect import detect, LangDetectException  # type: ignore[import]
+        return detect(text[:600])
+    except Exception:
+        return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +84,8 @@ def _extract_article_text(article: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 _SCHEMA = {
+    # voiceover önce geliyor — LLM token bütçesi tükenmeden üretsin
+    "voiceover": "Write the full anchor narration here. 3-5 complete sentences. 40-60 seconds when read aloud.",
     "video_plan": {
         "title": "Short punchy video title (max 8 words)",
         "master_format": "9:16",
@@ -101,40 +144,95 @@ _SCHEMA = {
             },
         ],
     },
-    "voiceover": (
-        "Full narration script that a news anchor would read aloud. "
-        "Natural flow, 40–60 seconds reading time. "
-        "Must cover: what happened, who is involved, key facts, and what happens next."
-    ),
-    "image_prompts": [
-        {
-            "scene_id": "scene-1",
-            "label": "Scene 1 background image",
-            "prompt": "Detailed English image generation prompt compatible with DALL-E / Midjourney",
-            "style": "cinematic",
-        }
-    ],
 }
 
-_INSTRUCTIONS = """You are an experienced social media news commentator.
-Read the article below and generate YouTube Shorts / Instagram Reels content.
+_INSTRUCTIONS = """You are an experienced social media news editor. Your job is to turn a news article into a punchy YouTube Shorts / Instagram Reels script.
+
+Before writing anything, mentally scan the article for:
+  A) The single most surprising or emotional moment (a quote, a reaction, a reversal)
+  B) The strongest NUMBER or historical stat (years, records, firsts, amounts)
+  C) The core "why it matters" for a casual viewer who knows nothing about this topic
+
+These three elements MUST appear somewhere in your output.
 
 STRICT RULES:
-1. scene.body = text the viewer will READ on screen — not a production note, not a design brief.
-   Write it as a real news sentence: "Nine people, including rappers Pooh Shiesty and Big30, have been federally charged..."
-2. voiceover = natural anchor narration. 40–60 seconds reading time. Engaging, human, like a podcast host.
-3. key_figures = ONLY real names of people, teams, companies, or government agencies found in the article.
-   NEVER use generic words like "Dallas", "Studio", "Evidence", "Eight", "Earth", "Finding".
-4. key_data = the most striking single fact with a number: "9 charged", "$2.3B loss", "3–1 final score".
-   If no clear number exists, use an empty string.
-5. NEVER use ellipsis (...). NEVER truncate text. Write complete sentences.
-6. Each scene must introduce NEW information — no repeating scene 1 in scene 2.
-7. Use 1–4 scenes. If the story is simple, 1–2 scenes is enough.
-   Do NOT pad with filler scenes.
-8. image_prompts: English prompts ready for DALL-E 3 / Midjourney. Be specific and visual.
-9. Match the language of the article (English article → English output).
+1. voiceover MUST be a non-empty string — 4 to 6 complete sentences a news anchor reads aloud.
+   - Open with the most gripping fact or quote from the article, not a generic summary.
+     BAD:  "The community is outraged as the items are set to leave the country."
+     GOOD: "'[Direct quote from the article],' says [Name from the article]."
+     If a direct quote captures the story better than any summary, lead with the quote.
+     IMPORTANT: The examples above are illustrative only. Never copy example text into your output — use only quotes and names from the current article.
+   - Include at least one specific number, date, or record.
+   - Close with what happens next or why this matters.
+   - Write voiceover FIRST in the JSON before video_plan.
+
+2. scene.body = text the viewer will READ on screen. Real news sentences only.
+   Good: "Bezzecchi told reporters: 'His message moved me.' Now he leads MotoGP."
+   Bad: "Exciting developments in motorsport" or any vague production note.
+
+3. scene selection priority — always prefer the MOST IMPACTFUL angle:
+   - Emotional quotes > dry facts
+   - Historical records/firsts > general background
+   - Surprising reversals > expected outcomes
+   - Specific numbers > vague descriptions
+   NEVER fill a scene with secondary trivia when a stronger fact exists in the article.
+
+4. key_figures = ONLY real names of people, teams, clubs, or organizations from the article.
+   NEVER use generic words like "Stars", "Drivers", "Officials", "Rising Talent".
+
+5. key_data = one striking fact that includes a real number or record.
+   Good: "20 years — Italy's F1 drought", "3 consecutive wins", "$2.3B deal"
+   Bad: "Two rising stars", "Rossi will compete", or any sentence without a number.
+   If no number exists in the article, use an empty string.
+
+6. NEVER use ellipsis (...). Write complete sentences only.
+
+11. scene.headline is subject to the same factual accuracy and emotional language rules as scene.body. Headlines are NOT creative summaries — they must stay within what the article explicitly states.
+    BAD:  "Rossi's message moved Bezzecchi to tears"  ← escalates "me emocionó"
+    GOOD: "Rossi's call kept Bezzecchi winning"       ← stays within article facts
+    If the body correctly says "moved me", the headline cannot say "to tears".
+    If the body correctly says "led the championship", the headline cannot say "won the title".
+
+7. Each scene must introduce NEW information. No repeating scene 1 in scene 2.
+
+8. Use 1–4 scenes based on story depth. Do NOT pad with filler scenes.
+
+12. The takeaway scene (purpose: "takeaway") must close with a fact, consequence, or direct implication that is explicitly stated or clearly shown in the article. Do NOT invent editorial angles, themes, or conclusions that are not in the article.
+    BAD:  "This mission could set a new standard for international collaboration in lunar travel."  ← not in article
+    GOOD: "Hansen will fly further from Earth than any human before — more than 250,000 miles."  ← directly from article
+
+9. Match the language of the article (Spanish article → Spanish output, English → English).
+
 10. layout_hint choices: headline, split, stat, timeline, quote, comparison, minimal, full-bleed
     purpose choices: hook, explain, detail, context, comparison, takeaway, close
+    Use layout_hint "quote" when a scene features a direct quote from a person.
+    Use layout_hint "stat" only when key_data contains a real number.
+
+CRITICAL: The JSON must start with the "voiceover" key. voiceover must never be empty.
+
+CLAIM STRENGTH: When translating records, titles, or achievements, always use the weakest accurate form. Never upgrade a claim to a stronger version.
+- "led the championship" ≠ "won the championship"
+- "won races" ≠ "won the world title"
+- "could become champion" ≠ "will become champion"
+- "one of the best" ≠ "the greatest ever"
+If the article says someone "led" or "was competitive", do NOT say they "won" or "dominated".
+
+FACTUAL ACCURACY: NEVER add details, timeframes, emotions, or intensifiers that are not explicitly stated in the article.
+- Do NOT write "moved to tears" if the article only says "moved me".
+- Do NOT write "in just two years" if no timeframe is given.
+- Do NOT invent quotes or paraphrase them as direct quotes.
+- Every claim in voiceover and scene.body must be directly traceable to the article text.
+- If the article does not give a specific number for a stat, do NOT invent one. Use the descriptive form instead: "consecutive wins" not "3 consecutive wins", "multiple goals" not "4 goals".
+- Do NOT add "first time", "first ever", "historic first", or similar superlatives unless the article explicitly uses those words. The article saying something is an "objective" or "goal" does NOT mean it is the first time it has been done.
+
+EMOTIONAL LANGUAGE TRANSLATION — Spanish articles often use emotionally rich words. Translate their EXACT meaning, never escalate:
+- "emocionó" / "me emocionó" → "moved me" or "affected me" — NOT "moved me to tears", NOT "made me cry"
+- "increíble" → "remarkable" or "impressive" — NOT "unbelievable" or "jaw-dropping"
+- "histórico" → "historic" — NOT "greatest ever" or "all-time"
+- "apasionante" → "exciting" — NOT "breathtaking" or "electrifying"
+- "impresionante" → "impressive" — NOT "stunning" or "incredible"
+- When in doubt: use the literal translation, not the most dramatic English equivalent.
+- This rule applies to ALL text fields without exception: voiceover, scene.body, scene.headline, headline fields, and sceneSequence entries. If it would be wrong in scene.body, it is equally wrong in a scene.headline.
 
 Return ONLY valid JSON matching the schema. No markdown, no commentary."""
 
@@ -147,7 +245,7 @@ def _build_prompt(article: dict[str, Any]) -> str:
         "category": _compact(str(article.get("category") or "general")),
         "published_at": _compact(str(article.get("published_at") or "")),
         "tags": article.get("tags") or [],
-        "language": _compact(str(article.get("language") or "en")),
+        "language": _detect_language(article),
         "url": _compact(str(article.get("url") or "")),
         "image_url": _compact(str(article.get("image_url") or "")),
         "article_text": article_text,
@@ -174,10 +272,13 @@ async def _call_ollama(prompt: str) -> dict[str, Any]:
         "prompt": prompt,
         "stream": False,
         "format": "json",
+        "think": False,   # qwen3 gibi thinking modellerde <think> bloklarını devre dışı bırakır
         "options": {
             "temperature": 0.75,
             "top_p": 0.90,
             "repeat_penalty": 1.05,
+            "num_predict": 2048,   # voiceover + video_plan için yeterli token
+            "num_ctx": 8192,       # context penceresi
         },
     }
     try:
@@ -188,9 +289,18 @@ async def _call_ollama(prompt: str) -> dict[str, Any]:
         raise ContentGenerationError(f"Ollama isteği başarısız: {exc}") from exc
 
     raw = _compact(response.json().get("response", ""))
+    logger.info("Ollama raw response (first 800 chars): %s", raw[:800])
+
+    # Strip <think>...</think> blocks (qwen3 ve benzeri thinking modeller için)
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
     # Strip potential markdown fences
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
+
+    if not raw:
+        raise ContentGenerationError("LLM boş yanıt döndürdü. Model yüklü ve erişilebilir mi?")
+
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -321,35 +431,96 @@ def _build_remotion_payload(article: dict[str, Any], llm: dict[str, Any]) -> dic
 
 
 # ---------------------------------------------------------------------------
+# Scene duration redistribution
+# ---------------------------------------------------------------------------
+
+# Edge TTS +10% rate → ortalama 2.75 kelime/saniye
+_WORDS_PER_SECOND = 2.75
+_MIN_SCENE_SECONDS = 3
+
+
+def _redistribute_scene_durations(scenes: list[dict], target_seconds: float) -> list[dict]:
+    """Sahne sürelerini voiceover kelime sayısından türetilen hedef süreye orantısal dağıtır.
+
+    - Her sahne en az _MIN_SCENE_SECONDS alır.
+    - Son sahne yuvarlama artıklarını yutar.
+    - scenes listesi değiştirilmez; yeni liste döner.
+    """
+    if not scenes or target_seconds <= 0:
+        return scenes
+
+    current_total = sum(s["duration_seconds"] for s in scenes)
+    if current_total <= 0:
+        return scenes
+
+    scale = target_seconds / current_total
+    new_scenes: list[dict] = []
+    allocated = 0
+
+    for i, scene in enumerate(scenes):
+        if i == len(scenes) - 1:
+            # Son sahne: kalan sürenin tamamını al
+            duration = max(_MIN_SCENE_SECONDS, round(target_seconds) - allocated)
+        else:
+            duration = max(_MIN_SCENE_SECONDS, round(scene["duration_seconds"] * scale))
+            allocated += duration
+        new_scenes.append({**scene, "duration_seconds": duration})
+
+    return new_scenes
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 async def generate_article_content(article: dict[str, Any]) -> ArticleContentResponse:
     """Ham article JSON → LLM → ArticleContentResponse."""
+    article_text = _extract_article_text(article)
+    if len(article_text) < _MIN_CONTENT_LENGTH:
+        raise ContentGenerationError(
+            "Makale içeriği yetersiz — yalnızca başlık veya kısa özet mevcut. "
+            "Model bu içerikten güvenilir video scripti üretemez."
+        )
     prompt = _build_prompt(article)
     llm_output = await _call_ollama(prompt)
 
     remotion_payload = _build_remotion_payload(article, llm_output)
 
     voiceover = _compact(str(llm_output.get("voiceover") or ""))
+    logger.info("LLM output keys: %s | voiceover length: %d", list(llm_output.keys()), len(voiceover))
 
-    raw_prompts = llm_output.get("image_prompts") or []
-    image_prompts: list[ImagePrompt] = []
-    for ip in raw_prompts:
-        if isinstance(ip, dict):
-            image_prompts.append(
-                ImagePrompt(
-                    scene_id=_compact(str(ip.get("scene_id") or "")),
-                    label=_compact(str(ip.get("label") or "")),
-                    prompt=_compact(str(ip.get("prompt") or "")),
-                    style=_compact(str(ip.get("style") or "cinematic")),
-                )
-            )
+    # Voiceover kelime sayısından tahmini süre hesapla ve sahne sürelerini yeniden dağıt.
+    # Bu sayede TTS kullanılmasa da (müzik, sessiz video) süreler anlamlı olur.
+    if voiceover:
+        word_count = len(voiceover.split())
+        estimated_seconds = max(10.0, word_count / _WORDS_PER_SECOND)
+        logger.info(
+            "Voiceover word count: %d → estimated duration: %.1fs", word_count, estimated_seconds
+        )
+
+        scenes = remotion_payload["videoPlan"]["scenes"]
+        redistributed = _redistribute_scene_durations(scenes, estimated_seconds)
+        new_total = sum(s["duration_seconds"] for s in redistributed)
+
+        remotion_payload["videoPlan"]["scenes"] = redistributed
+        remotion_payload["videoPlan"]["duration_seconds"] = new_total
+        remotion_payload["videoContent"]["duration_seconds"] = new_total
+        remotion_payload["durationSeconds"] = new_total
+
+        # storyboard sahnelerini de güncelle
+        for sb_scene, rs in zip(remotion_payload["storyboard"]["scenes"], redistributed):
+            sb_scene["duration_seconds"] = rs["duration_seconds"]
+
+        logger.info(
+            "Scene durations redistributed: %s → total %ds",
+            [s["duration_seconds"] for s in redistributed],
+            new_total,
+        )
 
     return ArticleContentResponse(
         remotion_payload=remotion_payload,
         voiceover=voiceover,
-        image_prompts=image_prompts,
+        image_prompts=[],
     )
 
 
@@ -375,8 +546,8 @@ async def generate_voiceover(text: str, provider: str, voice_id: str) -> Voiceov
             raise ContentGenerationError("edge-tts yüklü değil. `pip install edge-tts` komutunu çalıştırın.") from exc
 
         try:
-            voice = voice_id or "en-US-AriaNeural"
-            communicate = edge_tts.Communicate(text, voice=voice)
+            voice = voice_id or "en-US-JennyNeural"
+            communicate = edge_tts.Communicate(text, voice=voice, rate="+10%", pitch="+0Hz")
             await communicate.save(str(output_path))
         except Exception as exc:
             raise ContentGenerationError(f"Edge TTS ses üretimi başarısız: {exc}") from exc

@@ -1,8 +1,6 @@
 import apiClient from './client';
 import type {
   ArticleContentResponse,
-  ImageGenerateRequest,
-  ImageGenerateResponse,
   RenderVideoRequest,
   RenderVideoResponse,
   TtsVoice,
@@ -34,10 +32,6 @@ export async function getTtsVoices(provider: string): Promise<TtsVoice[]> {
   return data;
 }
 
-export async function generateImage(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
-  const { data } = await apiClient.post('/content/generate-image', { model: 'sdxl', ...request });
-  return data;
-}
 
 export async function renderVideo(request: RenderVideoRequest): Promise<RenderVideoResponse> {
   // Convert camelCase frontend types → snake_case Pydantic schema
